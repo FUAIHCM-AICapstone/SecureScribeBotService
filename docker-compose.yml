@@ -2,7 +2,7 @@ services:
   meeting-bot:
     build:
       context: .
-      dockerfile: Dockerfile.development
+      dockerfile: Dockerfile.production
     environment:
       - NODE_ENV=development
     ports:

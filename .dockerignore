@@ -1,7 +1,61 @@
-node_modules
-dist
-*.log
-.DS_Store
+# Git and version control
 .git
 .gitignore
+.github
+
+# Documentation
+README.md
+DEPLOYMENT.md
+GRACEFUL_SHUTDOWN.md
+*.md
+
+# Development files
 .vscode
+.env*
+.editorconfig
+
+# Dependencies
+node_modules
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Build outputs
+dist
+build
+coverage
+
+# Test files
+src/test
+*.test.js
+*.test.ts
+*.spec.js
+*.spec.ts
+
+# Runtime files
+logs
+*.log
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE files
+*.swp
+*.swo
+*~
+
+# Assets that aren't needed in container
+assets/screenshots
+screenshots
+
+# Development Docker files
+docker-compose.yml
+Dockerfile.development
+Dockerfile.production.optimized
+Dockerfile.distroless
