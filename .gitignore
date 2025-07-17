@@ -11,3 +11,4 @@ __pycache__/
 gcp-key
 assets/screenshots
 /data
+.vscode/
