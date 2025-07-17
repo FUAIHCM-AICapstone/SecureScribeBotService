@@ -1,16 +1,15 @@
 import { chromium } from 'playwright-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import { JoinParams } from './AbstractMeetBot';
-import { BotStatus, ContentType, WaitPromise } from '../types';
+import { BotStatus } from '../types';
 import config from '../config';
 import { WaitingAtLobbyRetryError } from '../error';
 import { patchBotStatus } from '../services/botService';
 import { handleWaitingAtLobbyError, MeetBotBase } from './MeetBotBase';
 import { v4 } from 'uuid';
 import { Logger } from 'winston';
-import { browserLogCaptureCallback } from '../util/logger';
-import { getWaitingPromise } from '../lib/promise';
 import { retryActionWithWait } from '../util/resilience';
+import { RecordingTask } from '../tasks/RecordingTask';
 
 const stealthPlugin = StealthPlugin();
 stealthPlugin.enabledEvasions.delete('iframe.contentWindow');
@@ -290,331 +289,20 @@ export class GoogleMeetBot extends MeetBotBase {
 
     // Recording the meeting page
     this._logger.info('Begin recording...');
-    await this.recordMeetingPage({ teamId, eventId, userId, botId });
+    console.log('🎬 Starting recording with RecordingTask...');
 
-    pushState('finished');
-  }
-
-  private async recordMeetingPage(
-    { teamId, userId, eventId, botId }:
-    { teamId: string, userId: string, eventId?: string, botId?: string}
-  ): Promise<void> {
-    const duration = config.maxRecordingDuration * 60 * 1000;
-    const inactivityLimit = config.inactivityLimit * 60 * 1000;
-
-    // Capture and send the browser console logs to Node.js context
-    this.page?.on('console', async msg => {
-      try {
-        await browserLogCaptureCallback(this._logger, msg);
-      } catch(err) {
-        this._logger.info('Playwright chrome logger: Failed to log browser messages...', err?.message);
-      }
-    });
-
-    await this.page.exposeFunction('screenAppMeetEnd', (slightlySecretId: string) => {
-      if (slightlySecretId !== this.slightlySecretId) return;
-      try {
-        this._logger.info('Attempt to end meeting early...');
-        waitingPromise.resolveEarly();
-      } catch (error) {
-        console.error('Could not process meeting end event', error);
-      }
-    });
-
-    // Inject the MediaRecorder code into the browser context using page.evaluate
-    await this.page.evaluate(
-      async ({ teamId, duration, inactivityLimit, userId, slightlySecretId, activateInactivityDetectionAfter, activateInactivityDetectionAfterMinutes }:
-      { teamId:string, userId: string, duration: number, inactivityLimit: number, slightlySecretId: string, activateInactivityDetectionAfter: string, activateInactivityDetectionAfterMinutes: number }) => {
-        let timeoutId: NodeJS.Timeout;
-        let inactivityDetectionTimeout: NodeJS.Timeout;
-
-        const sendChunkToServer = async (chunk: ArrayBuffer) => {
-          function arrayBufferToBase64(buffer: ArrayBuffer) {
-            let binary = '';
-            const bytes = new Uint8Array(buffer);
-            for (let i = 0; i < bytes.byteLength; i++) {
-              binary += String.fromCharCode(bytes[i]);
-            }
-            return btoa(binary);
-          }
-          const base64 = arrayBufferToBase64(chunk);
-          await (window as any).screenAppSendData(slightlySecretId, base64);
-        };
-
-        async function startRecording() {
-          console.log('Will activate the inactivity detection after', activateInactivityDetectionAfter);
-
-          // Check for the availability of the mediaDevices API
-          if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
-            console.error('MediaDevices or getDisplayMedia not supported in this browser.');
-            return;
-          }
-
-          const contentType: ContentType = 'video/webm';
-          const mimeType = `${contentType}; codecs="h264"`;
-
-          const stream: MediaStream = await (navigator.mediaDevices as any).getDisplayMedia({
-            video: true,
-            audio: {
-              autoGainControl: false,
-              channels: 2,
-              channelCount: 2,
-              echoCancellation: false,
-              noiseSuppression: false,
-            },
-            preferCurrentTab: true,
-          });
-
-          // Check if we actually got audio tracks
-          const audioTracks = stream.getAudioTracks();
-          const hasAudioTracks = audioTracks.length > 0;
-
-          if (!hasAudioTracks) {
-            console.warn('No audio tracks available for silence detection. Will rely only on presence detection.');
-          }
-
-          let options: MediaRecorderOptions = { mimeType: contentType };
-          if (MediaRecorder.isTypeSupported(mimeType)) {
-            console.log(`Media Recorder will use ${mimeType} codecs...`);
-            options = { mimeType };
-          }
-          else {
-            console.warn('Media Recorder did not find codecs, Using webm default');
-          }
-
-          const mediaRecorder = new MediaRecorder(stream, { ...options });
-
-          mediaRecorder.ondataavailable = async (event: BlobEvent) => {
-            if (!event.data.size) {
-              console.warn('Received empty chunk...');
-              return;
-            }
-            try {
-              const arrayBuffer = await event.data.arrayBuffer();
-              sendChunkToServer(arrayBuffer);
-            } catch (error) {
-              console.error('Error uploading chunk:', error);
-            }
-          };
-
-          // Start recording with 2-second intervals
-          const chunkDuration = 2000;
-          mediaRecorder.start(chunkDuration);
-
-          const stopTheRecording = async () => {
-            mediaRecorder.stop();
-            stream.getTracks().forEach((track) => track.stop());
-
-            // Cleanup recording timer
-            clearTimeout(timeoutId);
-
-            // Cancel the perpetural checks
-            if (inactivityDetectionTimeout) {
-              clearTimeout(inactivityDetectionTimeout);
-            }
-
-            // Begin browser cleanup
-            (window as any).screenAppMeetEnd(slightlySecretId);
-          };
-
-          let loneTest: NodeJS.Timeout;
-          let detectionFailures = 0;
-          const maxDetectionFailures = 10; // Track up to 10 consecutive failures
-
-          // Simple check to verify we're still on a supported Google Meet page
-          const isOnValidGoogleMeetPage = () => {
-            try {
-              // Check if we're still on a Google Meet URL
-              const currentUrl = window.location.href;
-              if (!currentUrl.includes('meet.google.com')) {
-                console.warn('No longer on Google Meet page - URL changed to:', currentUrl);
-                return false;
-              }
-
-              const currentBodyText = document.body.innerText;
-              if (currentBodyText.includes('You\'ve been removed from the meeting')) {
-                console.warn('User was removed from the meeting - ending recording on team:', userId, teamId);
-                return false;
-              }
-
-              // Check for basic Google Meet UI elements
-              const hasMeetElements = document.querySelector('button[aria-label="People"]') !== null ||
-                                    document.querySelector('button[aria-label="Leave call"]') !== null;
-
-              if (!hasMeetElements) {
-                console.warn('Google Meet UI elements not found - page may have changed state');
-                return false;
-              }
-
-              return true;
-            } catch (error) {
-              console.error('Error checking page validity:', error);
-              return false;
-            }
-          };
-
-          const detectLoneParticipant = () => {
-            loneTest = setInterval(() => {
-              try {
-                // First check if we're still on a valid Google Meet page
-                if (!isOnValidGoogleMeetPage()) {
-                  console.log('Google Meet page state changed - ending recording on team:', userId, teamId);
-                  clearInterval(loneTest);
-                  stopTheRecording();
-                  return;
-                }
-
-                const re = new RegExp(/^[0-9]$/g);
-
-                const contributors = Array.from(document.querySelector('button[aria-label="People"]')?.parentNode?.parentNode?.querySelectorAll('div') ?? [])
-                    .filter(x => (re.test(x.innerText)))[0]
-                    ?.innerText;
-
-                if (typeof contributors === 'undefined') {
-                  detectionFailures++;
-                  console.error('Possibly Google Meet presence detection did not work on team:', teamId, 'Failure count:', detectionFailures);
-
-                  if (detectionFailures >= maxDetectionFailures) {
-                    console.error('Presence detection consistently failing - this may indicate a Google Meet UI change or technical issue. Meeting will continue until max duration.', { bodyText: document?.body?.innerText });
-                    clearInterval(loneTest);
-                  }
-                  return;
-                }
-
-                // Reset failure count on success
-                detectionFailures = 0;
-                const isBotAlone = Number(contributors) < 2;
-
-                if (isBotAlone) {
-                  console.log('Detected meeting bot is alone in meeting, ending recording on team:', userId, teamId);
-                  clearInterval(loneTest);
-                  stopTheRecording();
-                }
-              } catch (error) {
-                detectionFailures++;
-                console.error('Google Meet presence detection failed on team:', userId, teamId, error, 'Failure count:', detectionFailures);
-
-                if (detectionFailures >= maxDetectionFailures) {
-                  console.error('Presence detection consistently failing - this may indicate a Google Meet UI change or technical issue. Meeting will continue until max duration.');
-                  clearInterval(loneTest);
-                }
-              }
-            }, 5000); // Detect every 5 seconds
-          };
-
-          const detectIncrediblySilentMeeting = () => {
-            // Only run silence detection if we have audio tracks
-            if (!hasAudioTracks) {
-              console.warn('Skipping silence detection - no audio tracks available. This may be due to browser permissions or Google Meet audio sharing settings.');
-              console.warn('Meeting will rely on presence detection and max duration timeout.');
-              return;
-            }
-
-            try {
-              const audioContext = new AudioContext();
-              const mediaSource = audioContext.createMediaStreamSource(stream);
-              const analyser = audioContext.createAnalyser();
-
-              /* Use a value suitable for the given use case of silence detection
-                 |
-                 |____ Relatively smaller FFT size for faster processing and less sampling
-              */
-              analyser.fftSize = 256;
-
-              mediaSource.connect(analyser);
-
-              const dataArray = new Uint8Array(analyser.frequencyBinCount);
-
-              // Sliding silence period
-              let silenceDuration = 0;
-              let totalChecks = 0;
-              let audioActivitySum = 0;
-
-              // Audio gain/volume
-              const silenceThreshold = 10;
-
-              let monitor = true;
-
-              const monitorSilence = () => {
-                try {
-                  analyser.getByteFrequencyData(dataArray);
-
-                  const audioActivity = dataArray.reduce((a, b) => a + b) / dataArray.length;
-                  audioActivitySum += audioActivity;
-                  totalChecks++;
-
-                  if (audioActivity < silenceThreshold) {
-                    silenceDuration += 100; // Check every 100ms
-                    if (silenceDuration >= inactivityLimit) {
-                        console.warn('Detected silence in Google Meet and ending the recording on team:', userId, teamId);
-                        console.log('Silence detection stats - Avg audio activity:', (audioActivitySum / totalChecks).toFixed(2), 'Checks performed:', totalChecks);
-                        monitor = false;
-                        stopTheRecording();
-                    }
-                  } else {
-                    silenceDuration = 0;
-                  }
-
-                  if (monitor) {
-                    // Recursively queue the next check
-                    setTimeout(monitorSilence, 100);
-                  }
-                } catch (error) {
-                  console.error('Error in silence monitoring:', error);
-                  console.warn('Silence detection failed - will rely on presence detection and max duration timeout.');
-                  // Stop monitoring on error
-                  monitor = false;
-                }
-              };
-
-              // Go silence monitor
-              monitorSilence();
-            } catch (error) {
-              console.error('Failed to initialize silence detection:', error);
-              console.warn('Silence detection initialization failed - will rely on presence detection and max duration timeout.');
-            }
-          };
-
-          /**
-           * Perpetual checks for inactivity detection
-           */
-          inactivityDetectionTimeout = setTimeout(() => {
-            detectLoneParticipant();
-            detectIncrediblySilentMeeting();
-          }, activateInactivityDetectionAfterMinutes * 60 * 1000);
-
-          // Cancel this timeout when stopping the recording
-          // Stop recording after `duration` minutes upper limit
-          timeoutId = setTimeout(async () => {
-            stopTheRecording();
-          }, duration);
-        }
-
-        // Start the recording
-        await startRecording();
-      },
-      {
-        teamId,
-        duration,
-        inactivityLimit,
-        userId,
-        slightlySecretId: this.slightlySecretId,
-        activateInactivityDetectionAfterMinutes: config.activateInactivityDetectionAfter,
-        activateInactivityDetectionAfter: new Date(new Date().getTime() + config.activateInactivityDetectionAfter * 60 * 1000).toISOString()
-      }
+    // Use RecordingTask for both video and audio recording
+    const recordingTask = new RecordingTask(
+      userId,
+      teamId,
+      this.page,
+      config.maxRecordingDuration * 60 * 1000, // Convert to milliseconds
+      this.slightlySecretId,
+      this._logger
     );
 
-    this._logger.info('Waiting for recording duration', config.maxRecordingDuration, 'minutes...');
-    const processingTime = 0.2 * 60 * 1000;
-    const waitingPromise: WaitPromise = getWaitingPromise(processingTime + duration);
+    await recordingTask.runAsync(null);
 
-    waitingPromise.promise.then(async () => {
-      this._logger.info('Closing the browser...');
-      await this.page.context().browser()?.close();
-
-      this._logger.info('All done ✨', { eventId, botId, userId, teamId });
-    });
-
-    await waitingPromise.promise;
+    pushState('finished');
   }
 }

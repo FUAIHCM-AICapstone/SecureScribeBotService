@@ -43,4 +43,13 @@ export default {
   activateInactivityDetectionAfter: 0.5,
   serviceKey: process.env.SCREENAPP_BACKEND_SERVICE_API_KEY,
   joinWaitTime: 10,
+  // Audio streaming configuration for SecureScribe API
+  audioStreaming: {
+    enabled: process.env.ENABLE_AUDIO_STREAMING === 'true',
+    wsEndpoint: process.env.AUDIO_STREAMING_WS_ENDPOINT || 'ws://localhost:8000/api/ws/audio',
+    sampleRate: parseInt(process.env.AUDIO_SAMPLE_RATE || '44100'),
+    channels: parseInt(process.env.AUDIO_CHANNELS || '1'),
+    format: process.env.AUDIO_FORMAT || 'wav',
+    chunkDuration: parseInt(process.env.AUDIO_CHUNK_DURATION || '1000'), // 1 second chunks
+  },
 };

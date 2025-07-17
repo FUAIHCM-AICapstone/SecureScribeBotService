@@ -2,9 +2,15 @@ services:
   meeting-bot:
     build:
       context: .
-      dockerfile: Dockerfile.production
+      dockerfile: Dockerfile.development
     environment:
       - NODE_ENV=development
+      - ENABLE_AUDIO_STREAMING=${ENABLE_AUDIO_STREAMING}
+      - AUDIO_STREAMING_WS_ENDPOINT=${AUDIO_STREAMING_WS_ENDPOINT}
+      - AUDIO_SAMPLE_RATE=${AUDIO_SAMPLE_RATE}
+      - AUDIO_CHANNELS=${AUDIO_CHANNELS}
+      - AUDIO_FORMAT=${AUDIO_FORMAT}
+      - AUDIO_CHUNK_DURATION=${AUDIO_CHUNK_DURATION}
     ports:
       - "3000:3000"
     volumes:
