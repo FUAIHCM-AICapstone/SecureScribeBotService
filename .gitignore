@@ -12,3 +12,5 @@ gcp-key
 assets/screenshots
 /data
 .vscode/
+finetuned_vivos_noisy/
+finetuned_vivos_noisy_onnx/

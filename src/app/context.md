@@ -1,11 +1,13 @@
 # src/app/ Context Guide
 
 ## Purpose
+
 HTTP API layer và route handlers cho Google Meet Bot service. Đây là entry point cho external requests và orchestrates các business logic.
 
 ## Key Files & Responsibilities
 
 ### `index.ts` - Main Express Application
+
 - **Express server setup** với middleware
 - **Health check endpoints**: `/health`, `/isbusy`, `/metrics`
 - **Prometheus metrics** integration
@@ -13,6 +15,7 @@ HTTP API layer và route handlers cho Google Meet Bot service. Đây là entry p
 - **Debug endpoint** cho development
 
 ### `google.ts` - Google Meet API Routes
+
 - **POST /google/join** - Main endpoint để join Google Meet
 - **Request validation** cho required fields
 - **Correlation ID generation** cho tracing
@@ -20,6 +23,7 @@ HTTP API layer và route handlers cho Google Meet Bot service. Đây là entry p
 - **Error handling** với proper HTTP status codes
 
 ### `common.ts` - Shared API Types & Utilities
+
 - **MeetingJoinParams interface** - Standard request format
 - **Retry logic with exponential backoff**
 - **KnownError handling** patterns
@@ -28,6 +32,7 @@ HTTP API layer và route handlers cho Google Meet Bot service. Đây là entry p
 ## Development Patterns
 
 ### Adding New Routes
+
 ```typescript
 // Luôn validate input trước
 if (!bearerToken || !url || !teamId) {
@@ -49,6 +54,7 @@ if (!jobResult.accepted) {
 ```
 
 ### Error Response Patterns
+
 ```typescript
 // Success (202 Accepted)
 res.status(202).json({
@@ -74,6 +80,7 @@ res.status(400).json({
 ## Using Tools
 
 ### Desktop Commander for API Testing
+
 ```bash
 # Test endpoints
 mcp_desktop-comma_start_process "curl http://localhost:3000/isbusy"
@@ -81,6 +88,7 @@ mcp_desktop-comma_start_process "curl -X POST http://localhost:3000/google/join 
 ```
 
 ### Context7 for Express Documentation
+
 ```typescript
 // Resolve Express.js patterns và best practices
 mcp_context7_resolve-library-id "express"
@@ -88,12 +96,14 @@ mcp_context7_get-library-docs "/expressjs/express" "routing middleware error-han
 ```
 
 ## Integration Points
+
 - **GlobalJobStore**: Single job execution enforcement
 - **Logger Factory**: Correlation ID based logging
 - **Bot Services**: Business logic delegation
 - **Config**: Environment-based settings
 
 ## Common Tasks
+
 1. **Add new platform support**: Create new router file, implement validation
 2. **Add middleware**: Modify `index.ts` app setup
 3. **Add metrics**: Extend Prometheus gauges

@@ -1,5 +1,6 @@
 import express from 'express';
 import client from 'prom-client';
+import path from 'path';
 import { NODE_ENV } from '../config';
 import mainDebug from '../test/debug';
 import googleRouter from './google';
@@ -23,19 +24,19 @@ app.get('/health', async (req, res) => {
   return res.status(200).json({
     status: 'healthy',
     timestamp: new Date().toISOString(),
-    uptime: process.uptime()
+    uptime: process.uptime(),
   });
 });
 
 // Create a Gauge metric for busy status (0 or 1)
 const busyStatus = new client.Gauge({
   name: 'isbusy',
-  help: 'busy status of the pod (1 = busy, 0 = available)'
+  help: 'busy status of the pod (1 = busy, 0 = available)',
 });
 
 const isavailable = new client.Gauge({
   name: 'isavailable',
-  help: 'available status of the pod (1 = available, 0 = busy)'
+  help: 'available status of the pod (1 = available, 0 = busy)',
 });
 
 app.get('/metrics', async (req, res) => {
@@ -47,27 +48,28 @@ app.get('/metrics', async (req, res) => {
   res.end(await client.register.metrics());
 });
 
-app.get('/debug', async (req, res, next) => {
-  if (NODE_ENV === 'development') {
-    next();
+app.get(
+  '/debug',
+  async (req, res, next) => {
+    if (NODE_ENV === 'development') {
+      next();
+    } else {
+      res.status(500).send({});
+    }
+  },
+  async (req, res) => {
+    await mainDebug('baf14', 'https://www.github.com');
+    res.status(200).send({});
   }
-  else {
-    res.status(500).send({});
-  }
-}, async (req, res) => {
-  await mainDebug('baf14', 'https://www.github.com');
-  res.status(200).send({});
-});
+);
 
 app.use('/google', googleRouter);
 
-export const setGracefulShutdown = (val: number) =>
-  gracefulShutdown = val;
+export const setGracefulShutdown = (val: number) => (gracefulShutdown = val);
 
 export const getGracefulShutdown = () => gracefulShutdown;
 
-export const setIsBusy = (val: number) =>
-  isbusy = val;
+export const setIsBusy = (val: number) => (isbusy = val);
 
 export const getIsBusy = () => isbusy;
 

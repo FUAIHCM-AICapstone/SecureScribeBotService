@@ -14,25 +14,26 @@ server.listen(port, () => {
 // Flag to prevent multiple shutdown attempts
 let shutdownInProgress = false;
 
+
 const initiateGracefulShutdown = async () => {
   if (shutdownInProgress) {
     console.log('Shutdown already in progress, ignoring signal');
     return;
   }
-  
+
   shutdownInProgress = true;
   console.log('Initiating graceful shutdown...');
-  
+
   try {
     // Set the graceful shutdown flag
     setGracefulShutdown(1);
-    
+
     // Request shutdown on the job store (prevents new jobs from being accepted)
     globalJobStore.requestShutdown();
-    
+
     // Wait for ongoing tasks to complete (no timeout - wait indefinitely)
     await globalJobStore.waitForCompletion();
-    
+
     // Now proceed with application shutdown
     gracefulShutdownApp();
   } catch (error) {

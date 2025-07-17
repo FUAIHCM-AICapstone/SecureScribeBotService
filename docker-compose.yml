@@ -12,13 +12,12 @@ services:
       - AUDIO_FORMAT=${AUDIO_FORMAT}
       - AUDIO_CHUNK_DURATION=${AUDIO_CHUNK_DURATION}
     ports:
-      - "3000:3000"
+      - '3000:3000'
     volumes:
       - .:/usr/src/app
       - ./assets/screenshots:/usr/src/app/assets/screenshots
       - /usr/src/app/node_modules
-    command: ["/bin/bash", "./start.sh"]
-
+    command: ['/bin/bash', './start.sh']
 
 volumes:
   cache:
