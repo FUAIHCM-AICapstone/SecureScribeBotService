@@ -12,7 +12,7 @@ services:
       - AUDIO_FORMAT=${AUDIO_FORMAT}
       - AUDIO_CHUNK_DURATION=${AUDIO_CHUNK_DURATION}
     ports:
-      - "3000:3000"
+      - "3003:3000"
     volumes:
       - .:/usr/src/app
       - ./assets/screenshots:/usr/src/app/assets/screenshots

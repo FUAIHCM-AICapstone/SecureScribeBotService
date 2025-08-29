@@ -52,7 +52,7 @@ export const joinMeetWithRetry = async (
     }
 
     retryCount += 1;
-    await sleep(retryCount * 30000);
+    await sleep(retryCount * 3000);
     if (retryCount < 3) {
       if (retryCount) {
         logger.warn(`Retry count: ${retryCount}`);

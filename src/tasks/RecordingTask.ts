@@ -206,7 +206,7 @@ export class RecordingTask extends Task<null, void> {
   protected async execute(): Promise<void> {
     // Expose audio streaming functions to the browser context
     console.log('🔍 ==========DETAILED CONFIG INSPECTION==========');
-    
+
     // Log safe config values to avoid circular references
     console.log('📊 Basic config values:');
     console.log(`   port: ${config.port}`);
@@ -214,7 +214,7 @@ export class RecordingTask extends Task<null, void> {
     console.log(`   chromeExecutablePath: ${config.chromeExecutablePath}`);
     console.log(`   inactivityLimit: ${config.inactivityLimit}`);
     console.log(`   joinWaitTime: ${config.joinWaitTime}`);
-    
+
     console.log('🎵 Audio streaming config:', JSON.stringify(config.audioStreaming, null, 2));
     console.log('🔧 Individual config values:');
     console.log(`   enabled: ${config.audioStreaming.enabled} (type: ${typeof config.audioStreaming.enabled})`);
@@ -231,7 +231,7 @@ export class RecordingTask extends Task<null, void> {
     console.log(`   AUDIO_FORMAT: ${process.env.AUDIO_FORMAT}`);
     console.log(`   AUDIO_CHUNK_DURATION: ${process.env.AUDIO_CHUNK_DURATION}`);
     console.log('🔍 ==============================================');
-    
+
     if (config.audioStreaming.enabled) {
       console.log('🔧 ✅ Audio streaming is ENABLED - exposing functions to browser context...');
       await this.page.exposeFunction('connectToAudioStream', this.connectToAudioStream.bind(this));
@@ -349,7 +349,7 @@ export class RecordingTask extends Task<null, void> {
           console.log(`   userId: ${userId}`);
           console.log(`   teamId: ${teamId}`);
           console.log('🎬 ==========================================');
-          
+
           console.log(
             'Will activate the inactivity detection after',
             activateInactivityDetectionAfter
@@ -417,7 +417,7 @@ export class RecordingTask extends Task<null, void> {
           console.log('🎵 Stream acquired - analyzing tracks:');
           console.log(`   Video tracks: ${stream.getVideoTracks().length}`);
           console.log(`   Audio tracks: ${stream.getAudioTracks().length}`);
-          
+
           stream.getAudioTracks().forEach((track, index) => {
             console.log(`   Audio track ${index + 1}:`, {
               id: track.id,
@@ -427,7 +427,7 @@ export class RecordingTask extends Task<null, void> {
               muted: track.muted,
               readyState: track.readyState,
             });
-            
+
             const settings = track.getSettings();
             console.log(`   Audio track ${index + 1} settings:`, settings);
           });
@@ -491,7 +491,7 @@ export class RecordingTask extends Task<null, void> {
                 'audio/wav',
                 'audio/webm'
               ];
-              
+
               codecTests.forEach(codec => {
                 const supported = MediaRecorder.isTypeSupported(codec);
                 console.log(`   ${codec}: ${supported ? '✅ Supported' : '❌ Not supported'}`);

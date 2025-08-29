@@ -10,6 +10,7 @@ import { v4 } from 'uuid';
 import { Logger } from 'winston';
 import { retryActionWithWait } from '../util/resilience';
 import { RecordingTask } from '../tasks/RecordingTask';
+import { VirtualCamera } from '../util/virtualCamera';
 
 const stealthPlugin = StealthPlugin();
 stealthPlugin.enabledEvasions.delete('iframe.contentWindow');
@@ -22,6 +23,8 @@ export const GOOGLE_REQUEST_TIMEOUT = 'No one responded to your request to join 
 
 export class GoogleMeetBot extends MeetBotBase {
   private _logger: Logger;
+  private virtualCamera: VirtualCamera | null = null;
+
   constructor(logger: Logger) {
     super();
     this.slightlySecretId = v4();
@@ -36,11 +39,16 @@ export class GoogleMeetBot extends MeetBotBase {
       await this.joinMeeting({ url, name, bearerToken, teamId, timezone, userId, eventId, botId, pushState });
       await patchBotStatus({ botId, eventId, provider: 'google', status: _state, token: bearerToken }, this._logger);
 
-    } catch(error) {
+    } catch (error) {
       if (!_state.includes('finished'))
         _state.push('failed');
 
       await patchBotStatus({ botId, eventId, provider: 'google', status: _state, token: bearerToken }, this._logger);
+
+      // Stop virtual camera on error
+      if (this.virtualCamera) {
+        await this.virtualCamera.stop();
+      }
 
       if (error instanceof WaitingAtLobbyRetryError) {
         await handleWaitingAtLobbyError({ token: bearerToken, botId, eventId, provider: 'google', error }, this._logger);
@@ -51,6 +59,8 @@ export class GoogleMeetBot extends MeetBotBase {
   }
 
   private async joinMeeting({ url, name, teamId, userId, eventId, botId, pushState }: JoinParams & { pushState(state: BotStatus): void }): Promise<void> {
+    // Log the meeting details for debugging
+    this._logger.info('Starting Google Meet session', { url, name, teamId, userId, eventId, botId });
     this._logger.info('Launching browser...');
 
     const browserArgs: string[] = [
@@ -82,11 +92,16 @@ export class GoogleMeetBot extends MeetBotBase {
 
     this.page = await context.newPage();
 
+    // Initialize virtual camera
+    this.virtualCamera = new VirtualCamera(this.page, this._logger);
+    await this.virtualCamera.initialize();
+    await this.virtualCamera.start();
+
     this._logger.info('Navigating to Google Meet URL...');
     await this.page.goto(url, { waitUntil: 'networkidle' });
 
     this._logger.info('Waiting for 10 seconds...');
-    await this.page.waitForTimeout(10000);
+    await this.page.waitForTimeout(3000);
 
     const dismissDeviceCheck = async () => {
       try {
@@ -118,13 +133,13 @@ export class GoogleMeetBot extends MeetBotBase {
     );
 
     this._logger.info('Waiting for 10 seconds...');
-    await this.page.waitForTimeout(10000);
+    await this.page.waitForTimeout(3000);
 
     this._logger.info('Filling the input field with the name...');
     await this.page.fill('input[type="text"][aria-label="Your name"]', name ? name : 'ScreenApp Notetaker');
 
     this._logger.info('Waiting for 10 seconds...');
-    await this.page.waitForTimeout(10000);
+    await this.page.waitForTimeout(3000);
 
     await retryActionWithWait(
       'Clicking the "Ask to join" button',
@@ -147,7 +162,7 @@ export class GoogleMeetBot extends MeetBotBase {
               this._logger.info(`Success clicked using "${text}" action...`);
               break;
             }
-          } catch(err) {
+          } catch (err) {
             this._logger.warn(`Unable to click using "${text}" action...`);
           }
         }
@@ -183,7 +198,7 @@ export class GoogleMeetBot extends MeetBotBase {
 
             try {
               peopleElement = await this.page.waitForSelector('button[aria-label="People"]', { timeout: 5000 });
-            } catch(e) {
+            } catch (e) {
               this._logger.error(
                 'wait error', { error: e }
               );
@@ -192,7 +207,7 @@ export class GoogleMeetBot extends MeetBotBase {
 
             try {
               callButtonElement = await this.page.waitForSelector('button[aria-label="Leave call"]', { timeout: 5000 });
-            } catch(e) {
+            } catch (e) {
               this._logger.error(
                 'wait error', { error: e }
               );
@@ -205,7 +220,7 @@ export class GoogleMeetBot extends MeetBotBase {
               clearTimeout(waitTimeout);
               resolveWaiting(true);
             }
-          } catch(e) {
+          } catch (e) {
             this._logger.error(
               'wait error', { error: e }
             );
@@ -224,8 +239,14 @@ export class GoogleMeetBot extends MeetBotBase {
 
         throw new WaitingAtLobbyRetryError('Google Meet bot could not enter the meeting...', bodyText ?? '', !userDenied, 2);
       }
-    } catch(lobbyError) {
+    } catch (lobbyError) {
       this._logger.info('Closing the browser on error...', lobbyError);
+
+      // Stop virtual camera
+      if (this.virtualCamera) {
+        await this.virtualCamera.stop();
+      }
+
       await this.page.context().browser()?.close();
 
       throw lobbyError;
