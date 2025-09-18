@@ -1,4 +1,5 @@
 import { Logger } from 'winston';
+import axios from 'axios';
 import {
   createPartUploadUrl,
   fileNameTemplate,
@@ -506,6 +507,91 @@ class DiskUploader implements IUploader {
     return false;
   }
 
+  private summarizeBody(data: any): string {
+    try {
+      const obj = typeof data === 'object' && data !== null ? data : JSON.parse(String(data ?? ''));
+      const keys = Object.keys(obj);
+      return `json keys: ${keys.slice(0, 10).join(', ')}`;
+    } catch {
+      const text = String(data ?? '');
+      return text.length > 200 ? text.slice(0, 200) : text;
+    }
+  }
+
+  private isRetryableWebhookError(err: any): boolean {
+    const status = err?.response?.status as number | undefined;
+    if (typeof status !== 'number') {
+      return true; // network or no response
+    }
+    return status >= 500;
+  }
+
+  private getWebhookUrl(): string {
+    return `http://localhost:8000/api/v1/audio-files/upload?meeting_id=${this._teamId}`;
+  }
+
+  private async uploadRecordingToWebhookOnce(primaryUploadResult: boolean): Promise<void> {
+    const filePath = DiskUploader.getFilePath(this._userId, this._tempFileId, this.fileExtension);
+
+    const fileBuffer = await fs.promises.readFile(filePath);
+    const blob = new Blob([new Uint8Array(fileBuffer as Buffer)], { type: 'video/webm' });
+
+    const form = new FormData();
+    const fileName = `${fileNameTemplate(this._namePrefix, getTimeString(this._timezone, this._logger))}${this.fileExtension}`;
+    form.append('file', blob, fileName);
+    form.append('uploadResult', primaryUploadResult ? 'true' : 'false');
+    form.append('userId', this._userId);
+    form.append('teamId', this._teamId);
+    form.append('botId', this._botId);
+
+    const url = this.getWebhookUrl();
+
+    this._logger.info('Calling webhook upload', {
+      url,
+      userId: this._userId,
+      teamId: this._teamId,
+      botId: this._botId,
+      fileName,
+      contentType: 'video/webm',
+    });
+
+    const response = await axios.post(url, form as any, {
+      headers: {
+        Authorization: `Bearer ${this._token}`,
+        Accept: 'application/json',
+      },
+      timeout: 60_000,
+    });
+
+    this._logger.info('Webhook upload success', {
+      status: response.status,
+      body: this.summarizeBody(response.data),
+    });
+  }
+
+  private async uploadRecordingToWebhookWithRetries(primaryUploadResult: boolean): Promise<boolean> {
+    let attempt = 0;
+    while (attempt < this.MAX_FILE_UPLOAD_RETRIES) {
+      try {
+        await this.uploadRecordingToWebhookOnce(primaryUploadResult);
+        return true;
+      } catch (err) {
+        attempt++;
+        const retryable = this.isRetryableWebhookError(err);
+        if (!retryable || attempt >= this.MAX_FILE_UPLOAD_RETRIES) {
+          const status = err?.response?.status;
+          const data = err?.response?.data;
+          this._logger.error('Webhook upload failed', { attempt, status, body: this.summarizeBody(data) });
+          return false;
+        }
+        const delay = this.RETRY_UPLOAD_DELAY_BASE_MS * Math.pow(2, attempt - 1);
+        this._logger.info(`Retrying webhook upload, attempt ${attempt} after ${delay}ms`);
+        await this.delayPromise(delay);
+      }
+    }
+    return false;
+  }
+
   public async uploadRecordingToRemoteStorage(options?: { forceUpload?: boolean }) {
     try {
       if (typeof options?.forceUpload === 'boolean') {
@@ -525,16 +611,23 @@ class DiskUploader implements IUploader {
       }
 
       // Upload recording to configured storage
+      let primaryOk = false;
       if (config.uploadType === 'screenapp') {
-        await this.uploadRecordingToScreenApp();
+        primaryOk = await this.uploadRecordingToScreenApp();
       } else if (config.uploadType === 's3') {
-        await this.uploadRecordingToS3CompatibleStorage();
+        primaryOk = await this.uploadRecordingToS3CompatibleStorage();
       }
 
-      // Delete temp file after the upload is finished
-      await this.deleteTempFileAsync();
+      // Webhook upload (sequential, after primary). Delete only if both succeed
+      const webhookOk = await this.uploadRecordingToWebhookWithRetries(primaryOk);
 
-      return true;
+      if (primaryOk && webhookOk) {
+        await this.deleteTempFileAsync();
+        return true;
+      }
+
+      this._logger.warn('Skipping temp file deletion because one of uploads failed', { primaryOk, webhookOk });
+      return false;
     } catch (err) {
       this._logger.info('Unable to upload recording to server...', this._userId, this._teamId, err);
       return false;
