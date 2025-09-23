@@ -11,6 +11,7 @@ An open-source automation bot for joining and recording video meetings across mu
 
 - **Multi-Platform Support**: Join meetings on Google Meet, Microsoft Teams, and Zoom
 - **Automated Recording**: Capture meeting recordings with configurable duration limits
+- **Webhook Notifications**: Receive real-time notifications when meetings complete or fail
 - **Single Job Execution**: Ensures only one meeting is processed at a time across the entire system
 - **Dual Integration Options**: RESTful API endpoints and Redis message queue for flexible integration
 - **Asynchronous Processing**: Redis queue support for high-throughput, scalable meeting requests
@@ -23,35 +24,40 @@ An open-source automation bot for joining and recording video meetings across mu
 
 ### Prerequisites
 
-- Node.js 18+ 
+- Node.js 18+
 - Docker and Docker Compose (for containerized deployment)
 - Git
 
 ### Installation
 
 1. **Clone the repository**
+
    ```bash
    git clone https://github.com/screenappai/meeting-bot.git
    cd meeting-bot
    ```
 
 2. **Install dependencies**
+
    ```bash
    npm install
    ```
 
 3. **Environment Setup**
+
    ```bash
    cp .env.example .env
    # Edit .env with your configuration
    ```
 
 4. **Run with Docker (Recommended)**
+
    ```bash
    npm run dev
    ```
 
    Or run locally:
+
    ```bash
    npm start
    ```
@@ -69,8 +75,8 @@ Meeting Bot operates with a single job execution model to ensure reliable meetin
 
 ### API Endpoints
 
-
 #### Join a Google Meet
+
 ```bash
 POST /google/join
 Content-Type: application/json
@@ -82,11 +88,13 @@ Content-Type: application/json
   "teamId": "team123",
   "timezone": "UTC",
   "userId": "user123",
-  "botId": "UUID"
+  "botId": "UUID",
+  "webhookUrl": "https://your-app.com/webhooks/meeting-complete" // Optional: Webhook URL for completion notifications
 }
 ```
 
 #### Join a Microsoft Teams Meeting
+
 ```bash
 POST /microsoft/join
 Content-Type: application/json
@@ -103,6 +111,7 @@ Content-Type: application/json
 ```
 
 #### Join a Zoom Meeting
+
 ```bash
 POST /zoom/join
 Content-Type: application/json
@@ -119,19 +128,21 @@ Content-Type: application/json
 ```
 
 #### Check System Status
+
 ```bash
 GET /isbusy
 ```
 
 #### Get Metrics
+
 ```bash
 GET /metrics
 ```
 
-
 ### Response Format
 
 **Success Response (202 Accepted):**
+
 ```json
 {
   "success": true,
@@ -145,6 +156,7 @@ GET /metrics
 ```
 
 **Busy Response (409 Conflict):**
+
 ```json
 {
   "success": false,
@@ -153,6 +165,81 @@ GET /metrics
 }
 ```
 
+### Webhook Notifications
+
+Meeting Bot supports webhook notifications to keep your application informed about meeting completion status. When a meeting finishes recording (successfully or with failure), the bot will send a POST request to your specified webhook URL.
+
+#### Webhook Request
+
+**Method:** `POST`  
+**Content-Type:** `application/json`  
+**Authorization:** `Bearer {bearerToken}` (same token used in the join request)
+
+**Headers:**
+
+```
+Authorization: Bearer your-auth-token
+Content-Type: application/json
+```
+
+#### Webhook Payload
+
+**Success Payload:**
+
+```json
+{
+  "status": "completed",
+  "userId": "user123",
+  "teamId": "team123",
+  "botId": "UUID",
+  "eventId": "event123",
+  "meetingUrl": "https://meet.google.com/abc-defg-hij",
+  "timestamp": "2024-01-15T10:30:00.000Z"
+}
+```
+
+**Failure Payload:**
+
+```json
+{
+  "status": "failed",
+  "userId": "user123",
+  "teamId": "team123",
+  "botId": "UUID",
+  "eventId": "event123",
+  "meetingUrl": "https://meet.google.com/abc-defg-hij",
+  "timestamp": "2024-01-15T10:30:00.000Z",
+  "error": "Meeting bot could not enter the meeting..."
+}
+```
+
+#### Webhook Response
+
+Your webhook endpoint should return a `2xx` status code to acknowledge receipt. Any other status code will be logged as a webhook failure.
+
+#### Monitoring Webhook Calls
+
+The bot includes extensive logging for webhook operations. Look for log entries prefixed with `WEBHOOK:` in your logs to monitor webhook call success/failure.
+
+#### Example Webhook Implementation
+
+```javascript
+app.post('/webhooks/meeting-complete', (req, res) => {
+  const { status, userId, teamId, botId, eventId, meetingUrl, timestamp, error } = req.body;
+
+  console.log(`Meeting ${status} for user ${userId}, team ${teamId}`);
+
+  if (status === 'completed') {
+    // Handle successful meeting completion
+    // e.g., update your database, send notifications, etc.
+  } else {
+    // Handle meeting failure
+    // e.g., retry logic, error notifications, etc.
+  }
+
+  res.status(200).send('OK');
+});
+```
 
 ### Redis Message Queue (Alternative to REST API)
 
@@ -170,13 +257,14 @@ interface MeetingJoinRedisParams {
   timezone: string;
   botId?: string;
   eventId?: string;
-  provider: 'google' | 'microsoft' | 'zoom';  // Required for Redis
+  provider: 'google' | 'microsoft' | 'zoom'; // Required for Redis
 }
 ```
 
 #### Adding Messages to Redis Queue
 
 **Using RPUSH (Recommended):**
+
 ```bash
 # Connect to Redis and add a message to the queue
 redis-cli RPUSH jobs:meetbot:list '{
@@ -194,30 +282,32 @@ redis-cli RPUSH jobs:meetbot:list '{
 **Using Redis Client Libraries:**
 
 **Node.js (ioredis):**
+
 ```javascript
 import Redis from 'ioredis';
 
 const redis = new Redis({
   host: 'localhost',
   port: 6379,
-  password: 'your-password'
+  password: 'your-password',
 });
 
 const message = {
-  url: "https://meet.google.com/abc-defg-hij",
-  name: "Meeting Notetaker",
-  teamId: "team123",
-  timezone: "UTC",
-  userId: "user123",
-  botId: "UUID",
-  provider: "google",
-  bearerToken: "your-auth-token"
+  url: 'https://meet.google.com/abc-defg-hij',
+  name: 'Meeting Notetaker',
+  teamId: 'team123',
+  timezone: 'UTC',
+  userId: 'user123',
+  botId: 'UUID',
+  provider: 'google',
+  bearerToken: 'your-auth-token',
 };
 
 await redis.rpush('jobs:meetbot:list', JSON.stringify(message));
 ```
 
 **Python (redis-py):**
+
 ```python
 import redis
 import json
@@ -249,14 +339,14 @@ r.rpush('jobs:meetbot:list', json.dumps(message))
 
 The following environment variables configure Redis connectivity:
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `REDIS_HOST` | Redis server hostname | `redis` |
-| `REDIS_PORT` | Redis server port | `6379` |
-| `REDIS_USERNAME` | Redis username (optional) | - |
-| `REDIS_PASSWORD` | Redis password (optional) | - |
-| `REDIS_QUEUE_NAME` | Queue name for meeting jobs | `jobs:meetbot:list` |
-| `REDIS_CONSUMER_ENABLED` | Enable/disable Redis consumer service | `false` |
+| Variable                 | Description                           | Default             |
+| ------------------------ | ------------------------------------- | ------------------- |
+| `REDIS_HOST`             | Redis server hostname                 | `redis`             |
+| `REDIS_PORT`             | Redis server port                     | `6379`              |
+| `REDIS_USERNAME`         | Redis username (optional)             | -                   |
+| `REDIS_PASSWORD`         | Redis password (optional)             | -                   |
+| `REDIS_QUEUE_NAME`       | Queue name for meeting jobs           | `jobs:meetbot:list` |
+| `REDIS_CONSUMER_ENABLED` | Enable/disable Redis consumer service | `false`             |
 
 **Note**: When `REDIS_CONSUMER_ENABLED` is set to `false`, the Redis consumer service will not start, and the application will only support REST API endpoints for meeting requests. Redis message queue functionality will be disabled.
 
@@ -271,18 +361,19 @@ Meeting Bot automatically uploads meeting recording to S3-compatible bucket stor
 
 #### Environment Variables for Upload Configuration
 
-| Variable | Description | Default | Required |
-|----------|-------------|---------|----------|
-| `S3_ENDPOINT` | S3-compatible service endpoint URL | - | Yes for non-AWS |
-| `S3_ACCESS_KEY_ID` | Access key for bucket authentication | - | Yes |
-| `S3_SECRET_ACCESS_KEY` | Secret key for bucket authentication | - | Yes |
-| `S3_BUCKET_NAME` | Target bucket name for uploads | - | Yes |
-| `S3_REGION` | AWS region (for AWS S3) | - | Yes |
-| `S3_USE_MINIO_COMPATIBILITY` | Enable MinIO compatibility mode | `false` | No |
+| Variable                     | Description                          | Default | Required        |
+| ---------------------------- | ------------------------------------ | ------- | --------------- |
+| `S3_ENDPOINT`                | S3-compatible service endpoint URL   | -       | Yes for non-AWS |
+| `S3_ACCESS_KEY_ID`           | Access key for bucket authentication | -       | Yes             |
+| `S3_SECRET_ACCESS_KEY`       | Secret key for bucket authentication | -       | Yes             |
+| `S3_BUCKET_NAME`             | Target bucket name for uploads       | -       | Yes             |
+| `S3_REGION`                  | AWS region (for AWS S3)              | -       | Yes             |
+| `S3_USE_MINIO_COMPATIBILITY` | Enable MinIO compatibility mode      | `false` | No              |
 
 #### Configuration Examples
 
 **AWS S3:**
+
 ```bash
 S3_ENDPOINT=https://s3.amazonaws.com
 S3_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE
@@ -292,6 +383,7 @@ S3_REGION=us-west-2
 ```
 
 **Google Cloud Storage (S3-compatible):**
+
 ```bash
 S3_ENDPOINT=https://storage.googleapis.com
 S3_ACCESS_KEY_ID=your-gcp-access-key
@@ -301,6 +393,7 @@ S3_REGION=us-west1
 ```
 
 **MinIO:**
+
 ```bash
 S3_ENDPOINT=http://localhost:9000
 S3_ACCESS_KEY_ID=minioadmin
@@ -323,24 +416,24 @@ S3_USE_MINIO_COMPATIBILITY=true
 
 ### Environment Variables
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `MAX_RECORDING_DURATION_MINUTES` | Maximum recording duration in minutes | `60` |
-| `PORT` | Server port | `3000` |
-| `NODE_ENV` | Environment mode | `development` |
-| `UPLOADER_FILE_EXTENSION` | Final recording file extension (e.g., .mkv, .webm) | `.webm` |
-| `REDIS_HOST` | Redis server hostname | `redis` |
-| `REDIS_PORT` | Redis server port | `6379` |
-| `REDIS_USERNAME` | Redis username (optional) | - |
-| `REDIS_PASSWORD` | Redis password (optional) | - |
-| `REDIS_QUEUE_NAME` | Queue name for meeting jobs | `jobs:meetbot:list` |
-| `REDIS_CONSUMER_ENABLED` | Enable/disable Redis consumer service | `false` |
-| `S3_ENDPOINT` | S3-compatible service endpoint URL | - |
-| `S3_ACCESS_KEY_ID` | Access key for bucket authentication | - |
-| `S3_SECRET_ACCESS_KEY` | Secret key for bucket authentication | - |
-| `S3_BUCKET_NAME` | Target bucket name for uploads | - |
-| `S3_REGION` | AWS region (for AWS S3) | - |
-| `S3_USE_MINIO_COMPATIBILITY` | Enable MinIO compatibility mode | `false` |
+| Variable                         | Description                                        | Default             |
+| -------------------------------- | -------------------------------------------------- | ------------------- |
+| `MAX_RECORDING_DURATION_MINUTES` | Maximum recording duration in minutes              | `60`                |
+| `PORT`                           | Server port                                        | `3000`              |
+| `NODE_ENV`                       | Environment mode                                   | `development`       |
+| `UPLOADER_FILE_EXTENSION`        | Final recording file extension (e.g., .mkv, .webm) | `.webm`             |
+| `REDIS_HOST`                     | Redis server hostname                              | `redis`             |
+| `REDIS_PORT`                     | Redis server port                                  | `6379`              |
+| `REDIS_USERNAME`                 | Redis username (optional)                          | -                   |
+| `REDIS_PASSWORD`                 | Redis password (optional)                          | -                   |
+| `REDIS_QUEUE_NAME`               | Queue name for meeting jobs                        | `jobs:meetbot:list` |
+| `REDIS_CONSUMER_ENABLED`         | Enable/disable Redis consumer service              | `false`             |
+| `S3_ENDPOINT`                    | S3-compatible service endpoint URL                 | -                   |
+| `S3_ACCESS_KEY_ID`               | Access key for bucket authentication               | -                   |
+| `S3_SECRET_ACCESS_KEY`           | Secret key for bucket authentication               | -                   |
+| `S3_BUCKET_NAME`                 | Target bucket name for uploads                     | -                   |
+| `S3_REGION`                      | AWS region (for AWS S3)                            | -                   |
+| `S3_USE_MINIO_COMPATIBILITY`     | Enable MinIO compatibility mode                    | `false`             |
 
 ### Docker Configuration
 
@@ -355,11 +448,13 @@ The project includes Docker support with separate configurations for development
 The project automatically builds and publishes Docker images to GitHub Packages on every push to the main branch.
 
 **Pull the latest image:**
+
 ```bash
 docker pull ghcr.io/screenappai/meeting-bot:latest
 ```
 
 **Run the container:**
+
 ```bash
 docker run -d \
   --name meeting-bot \
@@ -376,6 +471,7 @@ docker run -d \
 ```
 
 **Available tags:**
+
 - `latest` - Latest stable release from main branch
 - `main` - Latest commit from main branch
 - `sha-<commit-hash>` - Specific commit builds
@@ -416,6 +512,7 @@ Meeting Bot supports joining meetings where users can join with a direct link wi
 - **Waiting Room with Authentication**: Meetings where the waiting room requires user identification or authentication
 
 **Supported Scenarios:**
+
 - ✅ Public meeting links that allow direct join
 - ✅ Meetings with waiting rooms that don't require authentication
 - ✅ Meetings where the bot can join as a guest/anonymous participant
@@ -436,9 +533,11 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## 🆘 Support
 
 **🎯 Primary Support Channel:**
+
 - **Discord**: [Join our Discord Community](https://discord.gg/frS8QgUygn) - Our main forum for discussions, support, and real-time collaboration
 
 **📋 Additional Resources:**
+
 - **Issues**: [GitHub Issues](https://github.com/screenappai/meeting-bot/issues) - For bug reports and feature requests
 - **Documentation**: [Wiki](https://github.com/screenappai/meeting-bot/wiki) - Detailed documentation and guides
 
@@ -451,7 +550,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## 📊 Project Status
 
 - ✅ Google Meet support
-- ✅ Microsoft Teams support  
+- ✅ Microsoft Teams support
 - ✅ Zoom support
 - ✅ Recording functionality
 - ✅ Docker deployment

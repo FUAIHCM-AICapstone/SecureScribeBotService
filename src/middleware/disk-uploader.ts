@@ -41,8 +41,14 @@ function isNoSuchUploadError(err: any, userId: string, logger: Logger): boolean 
   return isNoSuchUpload;
 }
 
+export interface UploadResult {
+  success: boolean;
+  filePath?: string;
+  fileName?: string;
+}
+
 export interface IUploader {
-  uploadRecordingToRemoteStorage(options?: { forceUpload?: boolean }): Promise<boolean>;
+  uploadRecordingToRemoteStorage(options?: { forceUpload?: boolean }): Promise<UploadResult>;
   saveDataToTempFile(data: Buffer): Promise<boolean>;
 }
 
@@ -458,8 +464,8 @@ class DiskUploader implements IUploader {
     return success;
   }
 
-  private async uploadRecordingToS3CompatibleStorage(): Promise<boolean> {
-    const filePath = DiskUploader.getFilePath(this._userId, this._tempFileId, this.fileExtension);
+  private async uploadRecordingToS3CompatibleStorage(): Promise<{ filePath: string; fileName: string } | null> {
+    const localFilePath = DiskUploader.getFilePath(this._userId, this._tempFileId, this.fileExtension);
     const chunkSize = this.UPLOAD_CHUNK_SIZE;
 
     if (!config.s3CompatibleStorage.region || !config.s3CompatibleStorage.accessKeyId || !config.s3CompatibleStorage.secretAccessKey || !config.s3CompatibleStorage.bucket) {
@@ -483,14 +489,18 @@ class DiskUploader implements IUploader {
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
         this._logger.info(`S3 compatible storage upload attempt ${attempt} of ${maxAttempts}.`);
-        const uploadSuccess = await uploadMultipartS3(uploadConfig, filePath, key, this.contentType, this._logger, chunkSize);
+        const uploadSuccess = await uploadMultipartS3(uploadConfig, localFilePath, key, this.contentType, this._logger, chunkSize);
 
         if (!uploadSuccess) {
           throw new Error('Failed to upload recording to S3 compatible storage');
         }
 
         this._logger.info('S3 compatible storage upload success.');
-        return true;
+
+        return {
+          filePath: localFilePath,
+          fileName: `${fileName}${this.fileExtension}`
+        };
       } catch (err) {
         if (attempt >= maxAttempts) {
           this._logger.error(`Permanently failed to upload recording to S3 compatible storage after ${maxAttempts} attempts`, err);
@@ -503,10 +513,10 @@ class DiskUploader implements IUploader {
       }
     }
 
-    return false;
+    return null;
   }
 
-  public async uploadRecordingToRemoteStorage(options?: { forceUpload?: boolean }) {
+  public async uploadRecordingToRemoteStorage(options?: { forceUpload?: boolean }): Promise<UploadResult> {
     try {
       if (typeof options?.forceUpload === 'boolean') {
         this.forceUpload = options.forceUpload;
@@ -524,20 +534,33 @@ class DiskUploader implements IUploader {
         throw new Error(`Unable to finalise the temp recording file: ${this._userId} ${this._botId}`);
       }
 
+      let filePath: string | undefined;
+      let fileName: string | undefined;
+      let success = false;
+
       // Upload recording to configured storage
       if (config.uploadType === 'screenapp') {
-        await this.uploadRecordingToScreenApp();
+        success = await this.uploadRecordingToScreenApp();
       } else if (config.uploadType === 's3') {
-        await this.uploadRecordingToS3CompatibleStorage();
+        const s3Result = await this.uploadRecordingToS3CompatibleStorage();
+        if (s3Result !== null) {
+          filePath = s3Result.filePath;
+          fileName = s3Result.fileName;
+          success = true;
+        } else {
+          success = false;
+        }
+      } else {
+        success = false;
       }
 
-      // Delete temp file after the upload is finished
-      await this.deleteTempFileAsync();
+      // Don't delete temp file yet if upload was successful and we need to send webhook
+      // The file will be deleted after webhook is sent
 
-      return true;
+      return { success, filePath, fileName };
     } catch (err) {
       this._logger.info('Unable to upload recording to server...', this._userId, this._teamId, err);
-      return false;
+      return { success: false };
     }
   }
 }

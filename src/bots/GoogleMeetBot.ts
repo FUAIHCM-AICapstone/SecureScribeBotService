@@ -5,7 +5,7 @@ import { UnsupportedMeetingError, WaitingAtLobbyRetryError } from '../error';
 import { patchBotStatus } from '../services/botService';
 import { handleUnsupportedMeetingError, handleWaitingAtLobbyError, MeetBotBase } from './MeetBotBase';
 import { v4 } from 'uuid';
-import { IUploader } from '../middleware/disk-uploader';
+import { IUploader, UploadResult } from '../middleware/disk-uploader';
 import { Logger } from 'winston';
 import { browserLogCaptureCallback } from '../util/logger';
 import { getWaitingPromise } from '../lib/promise';
@@ -14,6 +14,10 @@ import { uploadDebugImage } from '../services/bugService';
 import createBrowserContext from '../lib/chromium';
 import { GOOGLE_LOBBY_MODE_HOST_TEXT, GOOGLE_REQUEST_DENIED, GOOGLE_REQUEST_TIMEOUT } from '../constants';
 import { vp9MimeType, webmMimeType } from '../lib/recording';
+import { WebhookPayload } from '../services/webhookService';
+import { callWebhook } from '../services/webhookService';
+import fs from 'fs';
+
 
 export class GoogleMeetBot extends MeetBotBase {
   private _logger: Logger;
@@ -25,14 +29,14 @@ export class GoogleMeetBot extends MeetBotBase {
     this._correlationId = correlationId;
   }
 
-  async join({ url, name, bearerToken, teamId, timezone, userId, eventId, botId, uploader }: JoinParams): Promise<void> {
+  async join({ url, name, bearerToken, teamId, timezone, userId, eventId, botId, uploader, webhookUrl }: JoinParams): Promise<void> {
     const _state: BotStatus[] = ['processing'];
 
     const handleUpload = async () => {
       this._logger.info('Begin recording upload to server', { userId, teamId });
       const uploadResult = await uploader.uploadRecordingToRemoteStorage();
       this._logger.info('Recording upload result', { uploadResult, userId, teamId });
-      return uploadResult;
+      return uploadResult.success;
     };
 
     try {
@@ -40,18 +44,175 @@ export class GoogleMeetBot extends MeetBotBase {
       await this.joinMeeting({ url, name, bearerToken, teamId, timezone, userId, eventId, botId, uploader, pushState });
 
       // Finish the upload from the temp video
-      const uploadResult = await handleUpload();
+      const uploadResult: UploadResult = await uploader.uploadRecordingToRemoteStorage();
+      const uploadSuccess = uploadResult.success;
 
-      if (_state.includes('finished') && !uploadResult) {
+      if (_state.includes('finished') && !uploadSuccess) {
         _state.splice(_state.indexOf('finished'), 1, 'failed');
       }
 
       await patchBotStatus({ botId, eventId, provider: 'google', status: _state, token: bearerToken }, this._logger);
+
+      // Call webhook if provided and upload was successful
+      if (webhookUrl && _state.includes('finished') && uploadSuccess) {
+        this._logger.info('WEBHOOK: Preparing to call webhook for successful completion', {
+          webhookUrl,
+          userId,
+          teamId,
+          botId,
+          eventId,
+          uploadResult,
+          finalState: _state
+        });
+
+        let fileData: Buffer | undefined;
+        let fileName: string | undefined;
+
+        // Read file content for webhook if file path is available
+        if (uploadResult.filePath && uploadResult.fileName) {
+          try {
+            fileData = await fs.promises.readFile(uploadResult.filePath);
+            fileName = uploadResult.fileName;
+            this._logger.info('WEBHOOK: Successfully read file for webhook', {
+              filePath: uploadResult.filePath,
+              fileName: uploadResult.fileName,
+              fileSize: fileData.length
+            });
+          } catch (fileReadError) {
+            this._logger.error('WEBHOOK: Failed to read file for webhook', {
+              filePath: uploadResult.filePath,
+              error: fileReadError.message
+            });
+            fileData = undefined;
+            fileName = undefined;
+          }
+        }
+
+        const webhookPayload: WebhookPayload = {
+          status: 'completed',
+          userId,
+          teamId,
+          botId,
+          eventId,
+          meetingUrl: url,
+          timestamp: new Date().toISOString(),
+          fileData,
+          fileName
+        };
+
+        this._logger.info('WEBHOOK: Calling webhook with payload', {
+          hasFileData: !!fileData,
+          fileName,
+          fileSize: fileData?.length
+        });
+
+        const webhookSuccess = await callWebhook(webhookUrl, bearerToken, webhookPayload, this._logger);
+
+        if (webhookSuccess) {
+          this._logger.info('WEBHOOK: Successfully called webhook for meeting completion', {
+            webhookUrl,
+            userId,
+            teamId,
+            botId,
+            eventId
+          });
+
+          // Delete temp file after successful webhook
+          if (uploadResult.filePath) {
+            try {
+              await fs.promises.unlink(uploadResult.filePath);
+              this._logger.info('Successfully deleted temp file after webhook', {
+                filePath: uploadResult.filePath
+              });
+            } catch (deleteError) {
+              this._logger.warn('Failed to delete temp file after webhook', {
+                filePath: uploadResult.filePath,
+                error: deleteError.message
+              });
+            }
+          }
+        } else {
+          this._logger.error('WEBHOOK: Failed to call webhook for meeting completion', {
+            webhookUrl,
+            userId,
+            teamId,
+            botId,
+            eventId
+          });
+        }
+      } else if (webhookUrl) {
+        this._logger.info('WEBHOOK: Skipping webhook call - conditions not met', {
+          webhookUrl,
+          hasWebhookUrl: !!webhookUrl,
+          isFinished: _state.includes('finished'),
+          uploadSuccess,
+          finalState: _state
+        });
+      } else if (uploadSuccess && uploadResult.filePath) {
+        // If no webhook but upload was successful, delete temp file
+        try {
+          await fs.promises.unlink(uploadResult.filePath);
+          this._logger.info('Successfully deleted temp file (no webhook)', {
+            filePath: uploadResult.filePath
+          });
+        } catch (deleteError) {
+          this._logger.warn('Failed to delete temp file (no webhook)', {
+            filePath: uploadResult.filePath,
+            error: deleteError.message
+          });
+        }
+      }
     } catch (error) {
       if (!_state.includes('finished'))
         _state.push('failed');
 
       await patchBotStatus({ botId, eventId, provider: 'google', status: _state, token: bearerToken }, this._logger);
+
+      // Call webhook for failed status if webhookUrl is provided
+      if (webhookUrl && _state.includes('failed')) {
+        this._logger.info('WEBHOOK: Preparing to call webhook for failure', {
+          webhookUrl,
+          userId,
+          teamId,
+          botId,
+          eventId,
+          error: error.message,
+          finalState: _state
+        });
+
+        const webhookPayload: WebhookPayload = {
+          status: 'failed',
+          userId,
+          teamId,
+          botId,
+          eventId,
+          meetingUrl: url,
+          timestamp: new Date().toISOString(),
+          error: error.message
+        };
+
+        this._logger.info('WEBHOOK: Calling webhook with failure payload', webhookPayload);
+
+        const webhookSuccess = await callWebhook(webhookUrl, bearerToken, webhookPayload, this._logger);
+
+        if (webhookSuccess) {
+          this._logger.info('WEBHOOK: Successfully called webhook for meeting failure', {
+            webhookUrl,
+            userId,
+            teamId,
+            botId,
+            eventId
+          });
+        } else {
+          this._logger.error('WEBHOOK: Failed to call webhook for meeting failure', {
+            webhookUrl,
+            userId,
+            teamId,
+            botId,
+            eventId
+          });
+        }
+      }
 
       if (error instanceof WaitingAtLobbyRetryError) {
         await handleWaitingAtLobbyError({ token: bearerToken, botId, eventId, provider: 'google', error }, this._logger);

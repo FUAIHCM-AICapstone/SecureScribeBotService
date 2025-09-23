@@ -11,6 +11,7 @@ export interface MeetingJoinParams {
   timezone: string;
   botId?: string;
   eventId?: string;
+  webhookUrl?: string;
 }
 
 export interface MeetingJoinRedisParams extends MeetingJoinParams {
