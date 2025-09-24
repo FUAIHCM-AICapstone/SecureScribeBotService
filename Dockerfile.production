@@ -5,12 +5,7 @@ WORKDIR /usr/src/app
 
 # Copy package files
 COPY package*.json ./
-RUN npm config set registry https://registry.npmjs.org/ \
-    && npm config set prefer-online true \
-    && npm config set fetch-retries 5 \
-    && npm config set fetch-retry-mintimeout 20000 \
-    && npm config set fetch-retry-maxtimeout 120000 \
-    && npm config set prefer-ipv4 true
+ENV NODE_OPTIONS=--dns-result-order=ipv4first
 # Install dependencies and Playwright
 RUN npm ci && npm cache clean --force && \
   npx playwright install --with-deps
