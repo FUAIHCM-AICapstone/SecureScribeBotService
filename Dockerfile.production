@@ -13,9 +13,8 @@ RUN npm ci && npm cache clean --force && \
 # Copy source code
 COPY . .
 
-# Build app and fix xvfb run-wrapper
-RUN npm run build && \
-  dos2unix /usr/src/app/xvfb-run-wrapper && chmod +x /usr/src/app/xvfb-run-wrapper
+# Build app only in builder stage
+RUN npm run build
 
 # Production stage
 FROM node:18-slim
@@ -77,6 +76,9 @@ RUN npm ci --only=production && npm cache clean --force
 # Copy built app and wrapper
 COPY --from=builder /usr/src/app/dist ./dist
 COPY --from=builder /usr/src/app/xvfb-run-wrapper ./
+
+# Process script in production stage
+RUN dos2unix /usr/src/app/xvfb-run-wrapper && chmod +x /usr/src/app/xvfb-run-wrapper
 
 # Environment
 ENV NODE_ENV=production
