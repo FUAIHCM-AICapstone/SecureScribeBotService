@@ -1,7 +1,6 @@
 # Use the official Node.js image as a base image
 FROM node:18
 
-# Set the working directory
 WORKDIR /usr/src/app
 
 # Install system dependencies, including WebGL support
@@ -27,7 +26,6 @@ RUN apt-get update && \
   libx11-dev \
   libxext-dev \
   dos2unix \
-  # ARM-specific packages (only for ARM64)
   $(if [ "$(dpkg --print-architecture)" = "arm64" ]; then echo "libgles2 libegl1 libwayland-egl1"; fi) \
   && rm -rf /var/lib/apt/lists/*
 
@@ -44,56 +42,53 @@ RUN wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | gpg --dearm
   apt-get update && apt-get install -y google-chrome-stable || apt-get install -y chromium && \
   rm -rf /var/lib/apt/lists/*
 
-# Create symlink for Playwright compatibility (ARM64 only)
+# Symlink for Playwright compatibility (ARM64 only)
 RUN if [ "$(dpkg --print-architecture)" = "arm64" ]; then ln -sf /usr/bin/chromium /usr/bin/google-chrome; fi
 
-# Create non-root user with a home directory
+# Non-root user
 RUN groupadd -g 1001 nodejs && \
     useradd -m -d /home/nodejs -r -u 1001 -g nodejs nodejs
 
-# Copy Chrome policy to allow protocol launching
+# Chrome policy
 RUN mkdir -p /etc/opt/chrome/policies/managed
 COPY --chown=nodejs:nodejs auto_launch_protocols.json /etc/opt/chrome/policies/managed/auto_launch_protocols.json
-    
-# Copy package files
-COPY package*.json ./
 
-# Install all dependencies (including dev dependencies for build)
+# Dependencies
+COPY package*.json ./
 RUN npm ci && npm cache clean --force
 
-# Install Playwright and its dependencies
+# Install Playwright
 RUN npx playwright install --with-deps
 
 # Copy source code
 COPY . .
 
-# Set environment variables
-ENV NODE_ENV=production
-
-# Set xvfb-run-wrapper permissions
-RUN dos2unix /usr/src/app/xvfb-run-wrapper && \
-    chmod +x /usr/src/app/xvfb-run-wrapper
-
-# Build the TypeScript code
+# Build app
 RUN npm run build
 
-USER root
-RUN mkdir -p /tmp/.X11-unix && chmod 1777 /tmp/.X11-unix
+# Fix xvfb run-wrapper
+RUN dos2unix /usr/src/app/xvfb-run-wrapper && chmod +x /usr/src/app/xvfb-run-wrapper
 
-RUN mkdir -p /usr/src/app/dist/_tempvideo \
-    && chmod -R 777 /usr/src/app/dist/_tempvideo
+# Permissions for Xvfb
+RUN mkdir -p /tmp/.X11-unix && chmod 1777 /tmp/.X11-unix && \
+    usermod -a -G video nodejs
 
-# Switch to non-root user
-USER nodejs
+# Temp folder
+RUN mkdir -p /usr/src/app/dist/_tempvideo && chmod -R 777 /usr/src/app/dist/_tempvideo
 
-# Expose the port your app runs on
+# Environment
+ENV NODE_ENV=production
+ENV DISPLAY=:99
+
+# Expose port
 EXPOSE 3000
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD node -e "require('http').get('http://localhost:3000/health', (res) => { process.exit(res.statusCode === 200 ? 0 : 1) })" || exit 1
 
-# Set the entry point
-ENTRYPOINT ["/usr/src/app/xvfb-run-wrapper"]
+# Switch user
+USER nodejs
 
-CMD ["node", "dist/index.js"] 
+# Start app (xvfb-run optional, không fail container nếu xvfb lỗi)
+CMD bash -c "xvfb-run -a node dist/index.js || node dist/index.js"
