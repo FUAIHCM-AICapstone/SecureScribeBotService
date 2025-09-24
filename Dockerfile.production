@@ -1,36 +1,52 @@
-# Use the official Node.js image as a base image
-FROM node:18
+# Build stage
+FROM node:18 AS builder
 
 WORKDIR /usr/src/app
 
-# Install system dependencies, including WebGL support
+# Copy package files
+COPY package*.json ./
+
+# Install dependencies and Playwright
+RUN npm ci && npm cache clean --force && \
+  npx playwright install --with-deps
+
+# Copy source code
+COPY . .
+
+# Build app and fix xvfb run-wrapper
+RUN npm run build && \
+  dos2unix /usr/src/app/xvfb-run-wrapper && chmod +x /usr/src/app/xvfb-run-wrapper
+
+# Production stage
+FROM node:18-slim
+
+WORKDIR /usr/src/app
+
+# Install system dependencies and Google Chrome in single layer (alphabetically sorted)
 RUN apt-get update && \
   apt-get install -y \
+  dos2unix \
   ffmpeg \
-  libnss3 \
-  libxss1 \
+  gnupg \
   libasound2 \
-  libatk1.0-0 \
   libatk-bridge2.0-0 \
+  libatk1.0-0 \
   libcups2 \
-  libxkbcommon-x11-0 \
   libgbm-dev \
   libgl1-mesa-dri \
   libgl1-mesa-glx \
-  mesa-utils \
-  xvfb \
-  wget \
-  gnupg \
-  xorg \
-  xserver-xorg \
+  libnss3 \
   libx11-dev \
   libxext-dev \
-  dos2unix \
-  $(if [ "$(dpkg --print-architecture)" = "arm64" ]; then echo "libgles2 libegl1 libwayland-egl1"; fi) \
-  && rm -rf /var/lib/apt/lists/*
-
-# Install Google Chrome
-RUN wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /usr/share/keyrings/google-linux-signing-key.gpg && \
+  libxkbcommon-x11-0 \
+  libxss1 \
+  mesa-utils \
+  wget \
+  xorg \
+  xserver-xorg \
+  xvfb \
+  $(if [ "$(dpkg --print-architecture)" = "arm64" ]; then echo "libegl1 libgles2 libwayland-egl1"; fi) && \
+  wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /usr/share/keyrings/google-linux-signing-key.gpg && \
   ARCH=$(dpkg --print-architecture) && \
   if [ "$ARCH" = "amd64" ]; then \
     echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-linux-signing-key.gpg] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list; \
@@ -40,41 +56,27 @@ RUN wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | gpg --dearm
     echo "deb [signed-by=/usr/share/keyrings/google-linux-signing-key.gpg] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list; \
   fi && \
   apt-get update && apt-get install -y google-chrome-stable || apt-get install -y chromium && \
+  if [ "$(dpkg --print-architecture)" = "arm64" ]; then ln -sf /usr/bin/chromium /usr/bin/google-chrome; fi && \
+  groupadd -g 1001 nodejs && \
+  useradd -m -d /home/nodejs -r -u 1001 -g nodejs nodejs && \
+  mkdir -p /tmp/.X11-unix && chmod 1777 /tmp/.X11-unix && \
+  usermod -a -G video nodejs && \
+  mkdir -p /usr/src/app/dist/_tempvideo && chmod -R 777 /usr/src/app/dist/_tempvideo && \
   rm -rf /var/lib/apt/lists/*
-
-# Symlink for Playwright compatibility (ARM64 only)
-RUN if [ "$(dpkg --print-architecture)" = "arm64" ]; then ln -sf /usr/bin/chromium /usr/bin/google-chrome; fi
-
-# Non-root user
-RUN groupadd -g 1001 nodejs && \
-    useradd -m -d /home/nodejs -r -u 1001 -g nodejs nodejs
 
 # Chrome policy
 RUN mkdir -p /etc/opt/chrome/policies/managed
 COPY --chown=nodejs:nodejs auto_launch_protocols.json /etc/opt/chrome/policies/managed/auto_launch_protocols.json
 
-# Dependencies
-COPY package*.json ./
-RUN npm ci && npm cache clean --force
+# Copy built artifacts and package files from builder stage
+COPY --from=builder /usr/src/app/package*.json ./
 
-# Install Playwright
-RUN npx playwright install --with-deps
+# Install production dependencies only
+RUN npm ci --only=production && npm cache clean --force
 
-# Copy source code
-COPY . .
-
-# Build app
-RUN npm run build
-
-# Fix xvfb run-wrapper
-RUN dos2unix /usr/src/app/xvfb-run-wrapper && chmod +x /usr/src/app/xvfb-run-wrapper
-
-# Permissions for Xvfb
-RUN mkdir -p /tmp/.X11-unix && chmod 1777 /tmp/.X11-unix && \
-    usermod -a -G video nodejs
-
-# Temp folder
-RUN mkdir -p /usr/src/app/dist/_tempvideo && chmod -R 777 /usr/src/app/dist/_tempvideo
+# Copy built app and wrapper
+COPY --from=builder /usr/src/app/dist ./dist
+COPY --from=builder /usr/src/app/xvfb-run-wrapper ./
 
 # Environment
 ENV NODE_ENV=production
