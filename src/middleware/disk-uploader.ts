@@ -484,19 +484,19 @@ class DiskUploader implements IUploader {
         secretAccessKey: !!config.s3CompatibleStorage.secretAccessKey,
         bucket: config.s3CompatibleStorage.bucket
       });
-      throw new Error('S3 compatible storage configuration is not set. Will not upload to s3 compatible storage...');
+      // throw new Error('S3 compatible storage configuration is not set. Will not upload to s3 compatible storage...');
     }
 
     const fileName = fileNameTemplate(this._namePrefix, getTimeString(this._timezone, this._logger));
     const key = `meeting-bot/${this._userId}/${fileName}${this.fileExtension}`;
 
     const uploadConfig = {
-      endpoint: config.s3CompatibleStorage.endpoint,
-      region: config.s3CompatibleStorage.region,
-      accessKeyId: config.s3CompatibleStorage.accessKeyId,
-      secretAccessKey: config.s3CompatibleStorage.secretAccessKey,
-      bucket: config.s3CompatibleStorage.bucket,
-      forcePathStyle: config.s3CompatibleStorage.forcePathStyle,
+      endpoint: config.s3CompatibleStorage.endpoint as string,
+      region: config.s3CompatibleStorage.region as string,
+      accessKeyId: config.s3CompatibleStorage.accessKeyId as string,
+      secretAccessKey: config.s3CompatibleStorage.secretAccessKey as string,
+      bucket: config.s3CompatibleStorage.bucket as string,
+      forcePathStyle: config.s3CompatibleStorage.forcePathStyle as boolean,
     };
 
     const maxAttempts = 2;
