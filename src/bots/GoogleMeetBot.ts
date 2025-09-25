@@ -577,11 +577,69 @@ export class GoogleMeetBot extends MeetBotBase {
       this._logger.info('"Got it" modals might be missing...', { error });
     }
 
+    // Send a chat message to indicate bot presence
+    await this.sendChatMessage();
+
     // Recording the meeting page
     this._logger.info('Begin recording...');
     await this.recordMeetingPage({ teamId, eventId, userId, botId, uploader });
+    try {
+
+
+    } catch (error) {
+      this._logger.info('Error recording the meeting page...', { error });
+    }
 
     pushState('finished');
+  }
+
+  private async sendChatMessage(): Promise<void> {
+    try {
+      this._logger.info('CHAT: Attempting to open chat panel...');
+
+      // Click the "Chat with everyone" button
+      const chatButton = await this.page.getByRole('button', { name: /Chat with everyone/i });
+      if (await chatButton.count() > 0) {
+        await chatButton.click();
+        this._logger.info('CHAT: Clicked "Chat with everyone" button');
+        await this.page.waitForTimeout(1000); // Wait for chat panel to open
+      } else {
+        this._logger.warn('CHAT: "Chat with everyone" button not found');
+        return;
+      }
+
+      this._logger.info('CHAT: Attempting to send message...');
+
+      // Wait for and fill the chat textarea
+      const chatInput = await this.page.locator('textarea[aria-label="Send a message"]');
+      await chatInput.waitFor({ timeout: 5000 });
+      await chatInput.fill('Đã bắt đầu ghi hình các bạn nhé! 🫨');
+      this._logger.info('CHAT: Filled chat input with message');
+
+      // Click the "Send a message" button
+      const sendButton = await this.page.getByRole('button', { name: 'Send a message' });
+      if (await sendButton.count() > 0 && !(await sendButton.isDisabled())) {
+        await sendButton.click();
+        this._logger.info('CHAT: Clicked "Send a message" button');
+
+        // Immediately close the chat panel after sending
+        const closeButton = await this.page.getByRole('button', { name: 'Close' });
+        if (await closeButton.count() > 0) {
+          await closeButton.click();
+          this._logger.info('CHAT: Closed chat panel after sending message');
+        } else {
+          this._logger.warn('CHAT: Close button not found');
+        }
+      } else {
+        this._logger.warn('CHAT: "Send a message" button not clickable or disabled');
+      }
+
+      this._logger.info('CHAT: Chat message sent successfully');
+
+    } catch (error) {
+      // Log and continue - chat is not critical to recording functionality
+      this._logger.info('CHAT: Failed to send chat message, continuing with recording...', { error: error.message });
+    }
   }
 
   private async recordMeetingPage(
