@@ -1,4 +1,8 @@
+import fs, { createWriteStream } from 'fs';
+import path from 'path';
 import { Logger } from 'winston';
+import config from '../config';
+import { getTimeString } from '../lib/datetime';
 import {
   createPartUploadUrl,
   fileNameTemplate,
@@ -7,12 +11,8 @@ import {
   uploadChunkToStorage
 } from '../services/uploadService';
 import { ContentType, extensionToContentType, FileType } from '../types';
-import fs, { createWriteStream } from 'fs';
-import path from 'path';
-import { LogAggregator } from '../util/logger';
-import config from '../config';
 import { uploadMultipartS3 } from '../uploader/s3-compatible-storage';
-import { getTimeString } from '../lib/datetime';
+import { LogAggregator } from '../util/logger';
 
 console.log(' ----- PWD OR CWD ----- ', process.cwd());
 
@@ -468,7 +468,22 @@ class DiskUploader implements IUploader {
     const localFilePath = DiskUploader.getFilePath(this._userId, this._tempFileId, this.fileExtension);
     const chunkSize = this.UPLOAD_CHUNK_SIZE;
 
+    this._logger.info('S3 CONFIG DEBUG', {
+      region: config.s3CompatibleStorage.region,
+      accessKeyId: config.s3CompatibleStorage.accessKeyId,
+      secretAccessKey: config.s3CompatibleStorage.secretAccessKey ? '***' : undefined,
+      bucket: config.s3CompatibleStorage.bucket,
+      endpoint: config.s3CompatibleStorage.endpoint,
+      forcePathStyle: config.s3CompatibleStorage.forcePathStyle
+    });
+
     if (!config.s3CompatibleStorage.region || !config.s3CompatibleStorage.accessKeyId || !config.s3CompatibleStorage.secretAccessKey || !config.s3CompatibleStorage.bucket) {
+      this._logger.error('S3 CONFIG ERROR: Missing required configuration', {
+        region: config.s3CompatibleStorage.region,
+        accessKeyId: config.s3CompatibleStorage.accessKeyId,
+        secretAccessKey: !!config.s3CompatibleStorage.secretAccessKey,
+        bucket: config.s3CompatibleStorage.bucket
+      });
       throw new Error('S3 compatible storage configuration is not set. Will not upload to s3 compatible storage...');
     }
 
@@ -488,28 +503,45 @@ class DiskUploader implements IUploader {
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
-        this._logger.info(`S3 compatible storage upload attempt ${attempt} of ${maxAttempts}.`);
+        this._logger.info(`S3 UPLOAD: Attempt ${attempt} of ${maxAttempts}`, {
+          localFilePath,
+          key,
+          chunkSize,
+          contentType: this.contentType
+        });
+
         const uploadSuccess = await uploadMultipartS3(uploadConfig, localFilePath, key, this.contentType, this._logger, chunkSize);
 
         if (!uploadSuccess) {
           throw new Error('Failed to upload recording to S3 compatible storage');
         }
 
-        this._logger.info('S3 compatible storage upload success.');
+        this._logger.info('S3 UPLOAD: Success', {
+          filePath: localFilePath,
+          fileName: `${fileName}${this.fileExtension}`
+        });
 
         return {
           filePath: localFilePath,
           fileName: `${fileName}${this.fileExtension}`
         };
       } catch (err) {
+        this._logger.error(`S3 UPLOAD: Attempt ${attempt} failed`, {
+          error: err.message,
+          attempt,
+          maxAttempts
+        });
+
         if (attempt >= maxAttempts) {
-          this._logger.error(`Permanently failed to upload recording to S3 compatible storage after ${maxAttempts} attempts`, err);
+          this._logger.error('S3 UPLOAD: Permanently failed after max attempts', {
+            error: err.message
+          });
           throw err;
-        } else {
-          this._logger.error(`Failed to upload recording to S3 compatible storage attempt ${attempt} of ${maxAttempts}`, err);
-          const delay = this.RETRY_UPLOAD_DELAY_BASE_MS * Math.pow(2, attempt);
-          await this.delayPromise(delay);
         }
+
+        const delay = this.RETRY_UPLOAD_DELAY_BASE_MS * Math.pow(2, attempt);
+        this._logger.info('S3 UPLOAD: Retrying after delay', { delay });
+        await this.delayPromise(delay);
       }
     }
 
