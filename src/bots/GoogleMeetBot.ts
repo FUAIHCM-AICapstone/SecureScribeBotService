@@ -29,53 +29,101 @@ export class GoogleMeetBot extends MeetBotBase {
     this._correlationId = correlationId;
   }
 
-  async join({ url, name, bearerToken, teamId, timezone, userId, eventId, botId, uploader, webhookUrl }: JoinParams): Promise<void> {
+  async join({
+    url,
+    name,
+    bearerToken,
+    teamId,
+    timezone,
+    userId,
+    eventId,
+    botId,
+    uploader,
+    webhookUrl
+  }: JoinParams): Promise<void> {
     const _state: BotStatus[] = ['processing'];
 
     const handleUpload = async () => {
-      this._logger.info('Begin recording upload to server', { userId, teamId });
+      this._logger.info('UPLOAD: Starting recording upload to server', { userId, teamId, botId, eventId });
       const uploadResult = await uploader.uploadRecordingToRemoteStorage();
-      this._logger.info('Recording upload result', { uploadResult, userId, teamId });
-      return uploadResult.success;
+      this._logger.info('UPLOAD: Recording upload result', { uploadResult, userId, teamId, botId, eventId });
+      return uploadResult;
     };
 
     try {
       const pushState = (st: BotStatus) => _state.push(st);
-      await this.joinMeeting({ url, name, bearerToken, teamId, timezone, userId, eventId, botId, uploader, pushState });
 
-      // Finish the upload from the temp video
-      const uploadResult: UploadResult = await uploader.uploadRecordingToRemoteStorage();
+      this._logger.info('JOIN: Initiating meeting join process', {
+        url,
+        name,
+        userId,
+        botId,
+        eventId,
+        teamId,
+        timezone
+      });
+
+      await this.joinMeeting({
+        url,
+        name,
+        bearerToken,
+        teamId,
+        timezone,
+        userId,
+        eventId,
+        botId,
+        uploader,
+        pushState
+      });
+
+      this._logger.info('JOIN: Meeting join completed, proceeding to upload', {
+        userId,
+        botId,
+        eventId
+      });
+
+      const uploadResult = await handleUpload();
       const uploadSuccess = uploadResult.success;
 
       if (_state.includes('finished') && !uploadSuccess) {
         _state.splice(_state.indexOf('finished'), 1, 'failed');
+        this._logger.warn('UPLOAD: Upload failed after meeting finished', {
+          userId,
+          botId,
+          eventId
+        });
       }
 
-      await patchBotStatus({ botId, eventId, provider: 'google', status: _state, token: bearerToken }, this._logger);
+      await patchBotStatus({
+        botId,
+        eventId,
+        provider: 'google',
+        status: _state,
+        token: bearerToken
+      }, this._logger);
 
-      // Call webhook if provided and upload was successful
-      if (webhookUrl && _state.includes('finished') && uploadSuccess) {
-        this._logger.info('WEBHOOK: Preparing to call webhook for successful completion', {
+      // Always call webhook regardless of upload success
+      if (webhookUrl) {
+        this._logger.info('WEBHOOK: Preparing to call webhook', {
           webhookUrl,
           userId,
           teamId,
           botId,
           eventId,
-          uploadResult,
+          uploadSuccess,
           finalState: _state
         });
 
         let fileData: Buffer | undefined;
         let fileName: string | undefined;
 
-        // Read file content for webhook if file path is available
         if (uploadResult.filePath && uploadResult.fileName) {
           try {
             fileData = await fs.promises.readFile(uploadResult.filePath);
             fileName = uploadResult.fileName;
-            this._logger.info('WEBHOOK: Successfully read file for webhook', {
+            this._logger.info('WEBHOOK: File read successfully for webhook', {
               filePath: uploadResult.filePath,
-              fileName: uploadResult.fileName,
+              fileName,
               fileSize: fileData.length
             });
           } catch (fileReadError) {
@@ -83,13 +131,11 @@ export class GoogleMeetBot extends MeetBotBase {
               filePath: uploadResult.filePath,
               error: fileReadError.message
             });
-            fileData = undefined;
-            fileName = undefined;
           }
         }
 
         const webhookPayload: WebhookPayload = {
-          status: 'completed',
+          status: _state.includes('failed') ? 'failed' : 'completed',
           userId,
           teamId,
           botId,
@@ -97,19 +143,21 @@ export class GoogleMeetBot extends MeetBotBase {
           meetingUrl: url,
           timestamp: new Date().toISOString(),
           fileData,
-          fileName
+          fileName,
+          error: !uploadSuccess ? 'Upload failed or file missing' : undefined
         };
 
-        this._logger.info('WEBHOOK: Calling webhook with payload', {
+        this._logger.info('WEBHOOK: Sending payload', {
           hasFileData: !!fileData,
           fileName,
-          fileSize: fileData?.length
+          fileSize: fileData?.length,
+          status: webhookPayload.status
         });
 
         const webhookSuccess = await callWebhook(webhookUrl, bearerToken, webhookPayload, this._logger);
 
         if (webhookSuccess) {
-          this._logger.info('WEBHOOK: Successfully called webhook for meeting completion', {
+          this._logger.info('WEBHOOK: Successfully called webhook', {
             webhookUrl,
             userId,
             teamId,
@@ -117,22 +165,21 @@ export class GoogleMeetBot extends MeetBotBase {
             eventId
           });
 
-          // Delete temp file after successful webhook
           if (uploadResult.filePath) {
             try {
               await fs.promises.unlink(uploadResult.filePath);
-              this._logger.info('Successfully deleted temp file after webhook', {
+              this._logger.info('CLEANUP: Temp file deleted after webhook', {
                 filePath: uploadResult.filePath
               });
             } catch (deleteError) {
-              this._logger.warn('Failed to delete temp file after webhook', {
+              this._logger.warn('CLEANUP: Failed to delete temp file after webhook', {
                 filePath: uploadResult.filePath,
                 error: deleteError.message
               });
             }
           }
         } else {
-          this._logger.error('WEBHOOK: Failed to call webhook for meeting completion', {
+          this._logger.error('WEBHOOK: Failed to call webhook', {
             webhookUrl,
             userId,
             teamId,
@@ -140,46 +187,45 @@ export class GoogleMeetBot extends MeetBotBase {
             eventId
           });
         }
-      } else if (webhookUrl) {
-        this._logger.info('WEBHOOK: Skipping webhook call - conditions not met', {
-          webhookUrl,
-          hasWebhookUrl: !!webhookUrl,
-          isFinished: _state.includes('finished'),
+      } else {
+        this._logger.info('WEBHOOK: No webhook URL provided, skipping webhook call', {
           uploadSuccess,
           finalState: _state
         });
-      } else if (uploadSuccess && uploadResult.filePath) {
-        // If no webhook but upload was successful, delete temp file
-        try {
-          await fs.promises.unlink(uploadResult.filePath);
-          this._logger.info('Successfully deleted temp file (no webhook)', {
-            filePath: uploadResult.filePath
-          });
-        } catch (deleteError) {
-          this._logger.warn('Failed to delete temp file (no webhook)', {
-            filePath: uploadResult.filePath,
-            error: deleteError.message
-          });
+
+        if (uploadSuccess && uploadResult.filePath) {
+          try {
+            await fs.promises.unlink(uploadResult.filePath);
+            this._logger.info('CLEANUP: Temp file deleted (no webhook)', {
+              filePath: uploadResult.filePath
+            });
+          } catch (deleteError) {
+            this._logger.warn('CLEANUP: Failed to delete temp file (no webhook)', {
+              filePath: uploadResult.filePath,
+              error: deleteError.message
+            });
+          }
         }
       }
     } catch (error) {
-      if (!_state.includes('finished'))
-        _state.push('failed');
+      if (!_state.includes('finished')) _state.push('failed');
 
-      await patchBotStatus({ botId, eventId, provider: 'google', status: _state, token: bearerToken }, this._logger);
+      this._logger.error('JOIN: Error during join process', {
+        error: error.message,
+        userId,
+        botId,
+        eventId
+      });
 
-      // Call webhook for failed status if webhookUrl is provided
-      if (webhookUrl && _state.includes('failed')) {
-        this._logger.info('WEBHOOK: Preparing to call webhook for failure', {
-          webhookUrl,
-          userId,
-          teamId,
-          botId,
-          eventId,
-          error: error.message,
-          finalState: _state
-        });
+      await patchBotStatus({
+        botId,
+        eventId,
+        provider: 'google',
+        status: _state,
+        token: bearerToken
+      }, this._logger);
 
+      if (webhookUrl) {
         const webhookPayload: WebhookPayload = {
           status: 'failed',
           userId,
@@ -191,12 +237,12 @@ export class GoogleMeetBot extends MeetBotBase {
           error: error.message
         };
 
-        this._logger.info('WEBHOOK: Calling webhook with failure payload', webhookPayload);
+        this._logger.info('WEBHOOK: Sending failure payload', webhookPayload);
 
         const webhookSuccess = await callWebhook(webhookUrl, bearerToken, webhookPayload, this._logger);
 
         if (webhookSuccess) {
-          this._logger.info('WEBHOOK: Successfully called webhook for meeting failure', {
+          this._logger.info('WEBHOOK: Successfully called webhook for failure', {
             webhookUrl,
             userId,
             teamId,
@@ -204,7 +250,7 @@ export class GoogleMeetBot extends MeetBotBase {
             eventId
           });
         } else {
-          this._logger.error('WEBHOOK: Failed to call webhook for meeting failure', {
+          this._logger.error('WEBHOOK: Failed to call webhook for failure', {
             webhookUrl,
             userId,
             teamId,
@@ -225,6 +271,7 @@ export class GoogleMeetBot extends MeetBotBase {
       throw error;
     }
   }
+
 
   private async joinMeeting({ url, name, teamId, userId, eventId, botId, pushState, uploader }: JoinParams & { pushState(state: BotStatus): void }): Promise<void> {
     this._logger.info('Launching browser...');

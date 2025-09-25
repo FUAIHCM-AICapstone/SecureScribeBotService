@@ -518,15 +518,26 @@ class DiskUploader implements IUploader {
 
   public async uploadRecordingToRemoteStorage(options?: { forceUpload?: boolean }): Promise<UploadResult> {
     try {
+      this._logger.info('Starting uploadRecordingToRemoteStorage...', {
+        userId: this._userId,
+        botId: this._botId,
+        options,
+      });
+
       if (typeof options?.forceUpload === 'boolean') {
         this.forceUpload = options.forceUpload;
+        this._logger.info('Force upload option set', { forceUpload: this.forceUpload });
       }
 
-      if (!await this.tempFileExists()) {
+      const tempExists = await this.tempFileExists();
+      this._logger.info('Checked temp file existence', { tempExists });
+
+      if (!tempExists) {
         throw new Error(`Unable to access the temp recording file on disk: ${this._userId} ${this._botId}`);
       }
 
       const goodToGo = await this.finalizeDiskWriting();
+      this._logger.info('Disk writing finalized', { goodToGo });
 
       if (this.forceUpload) {
         this._logger.info('Force upload is enabled. Ignoring disk writing check results...', { goodToGo });
@@ -538,11 +549,15 @@ class DiskUploader implements IUploader {
       let fileName: string | undefined;
       let success = false;
 
-      // Upload recording to configured storage
+      this._logger.info('Starting upload based on config', { uploadType: config.uploadType });
+
       if (config.uploadType === 'screenapp') {
         success = await this.uploadRecordingToScreenApp();
+        this._logger.info('Upload to ScreenApp completed', { success });
       } else if (config.uploadType === 's3') {
         const s3Result = await this.uploadRecordingToS3CompatibleStorage();
+        this._logger.info('Upload to S3-compatible storage completed', { s3Result });
+
         if (s3Result !== null) {
           filePath = s3Result.filePath;
           fileName = s3Result.fileName;
@@ -551,18 +566,30 @@ class DiskUploader implements IUploader {
           success = false;
         }
       } else {
+        this._logger.warn('Unknown upload type specified in config', { uploadType: config.uploadType });
         success = false;
       }
 
-      // Don't delete temp file yet if upload was successful and we need to send webhook
-      // The file will be deleted after webhook is sent
+      this._logger.info('Upload process completed', {
+        success,
+        filePath,
+        fileName,
+        userId: this._userId,
+        botId: this._botId,
+      });
 
       return { success, filePath, fileName };
     } catch (err) {
-      this._logger.info('Unable to upload recording to server...', this._userId, this._teamId, err);
+      console.error('\x1b[31m%s\x1b[0m', `Error uploading recording to server... ${err}`);
+      this._logger.error('Error uploading recording to server...', {
+        userId: this._userId,
+        teamId: this._teamId,
+        error: err,
+      });
       return { success: false };
     }
   }
+
 }
 
 export default DiskUploader;
