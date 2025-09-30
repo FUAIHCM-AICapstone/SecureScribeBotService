@@ -1,22 +1,21 @@
-import { JoinParams } from './AbstractMeetBot';
-import { BotStatus, WaitPromise } from '../types';
-import config from '../config';
-import { UnsupportedMeetingError, WaitingAtLobbyRetryError } from '../error';
-import { patchBotStatus } from '../services/botService';
-import { handleUnsupportedMeetingError, handleWaitingAtLobbyError, MeetBotBase } from './MeetBotBase';
-import { v4 } from 'uuid';
-import { IUploader } from '../middleware/disk-uploader';
-import { Logger } from 'winston';
-import { browserLogCaptureCallback } from '../util/logger';
-import { getWaitingPromise } from '../lib/promise';
-import { retryActionWithWait } from '../util/resilience';
-import { uploadDebugImage } from '../services/bugService';
-import createBrowserContext from '../lib/chromium';
-import { GOOGLE_LOBBY_MODE_HOST_TEXT, GOOGLE_REQUEST_DENIED, GOOGLE_REQUEST_TIMEOUT } from '../constants';
-import { vp9MimeType, webmMimeType } from '../lib/recording';
-import { WebhookPayload } from '../services/webhookService';
-import { callWebhook } from '../services/webhookService';
 import fs from 'fs';
+import { v4 } from 'uuid';
+import { Logger } from 'winston';
+import config from '../config';
+import { GOOGLE_LOBBY_MODE_HOST_TEXT, GOOGLE_REQUEST_DENIED, GOOGLE_REQUEST_TIMEOUT } from '../constants';
+import { UnsupportedMeetingError, WaitingAtLobbyRetryError } from '../error';
+import createBrowserContext from '../lib/chromium';
+import { getWaitingPromise } from '../lib/promise';
+import { vp9MimeType, webmMimeType } from '../lib/recording';
+import { IUploader } from '../middleware/disk-uploader';
+import { patchBotStatus } from '../services/botService';
+import { uploadDebugImage } from '../services/bugService';
+import { callWebhook, WebhookPayload } from '../services/webhookService';
+import { BotStatus, WaitPromise } from '../types';
+import { browserLogCaptureCallback } from '../util/logger';
+import { retryActionWithWait } from '../util/resilience';
+import { JoinParams } from './AbstractMeetBot';
+import { handleUnsupportedMeetingError, handleWaitingAtLobbyError, MeetBotBase } from './MeetBotBase';
 
 
 export class GoogleMeetBot extends MeetBotBase {
@@ -748,7 +747,17 @@ export class GoogleMeetBot extends MeetBotBase {
         let inactivitySilenceDetectionTimeout: NodeJS.Timeout;
         let isOnValidGoogleMeetPageInterval: NodeJS.Timeout;
         let chatScanInterval: NodeJS.Timeout;
-        const processedMessageIds = new Set();
+        const processedMessageIds = new Set(); // Track processed message IDs
+        const processedMessageContents = new Set(); // Track processed message contents to avoid duplicates
+        const processedContainers = new Set(); // Track processed container HTML to avoid duplicates
+
+        // Reset tracking every 10 minutes to avoid memory buildup
+        setInterval(() => {
+          processedMessageIds.clear();
+          processedMessageContents.clear();
+          processedContainers.clear();
+          console.log('CHAT_SCAN: Reset message tracking to prevent memory buildup');
+        }, 10 * 60 * 1000);
 
         const sendChunkToServer = async (chunk: ArrayBuffer) => {
           function arrayBufferToBase64(buffer: ArrayBuffer) {
@@ -829,23 +838,29 @@ export class GoogleMeetBot extends MeetBotBase {
             try {
               console.log('CHAT_SCAN: Starting message scan...');
 
-              // Find all user message containers
-              const userContainers = document.querySelectorAll('div[class*="beTDc"]');
+              // Find all user message containers - use more specific selector to avoid duplicates
+              const userContainers = document.querySelectorAll('div.Ss4fHf > div.beTDc');
 
               console.log('CHAT_SCAN: Found', userContainers.length, 'user containers');
 
               for (const userContainer of userContainers) {
-                // Get sender name
-                const senderElement = userContainer.querySelector('div[class*="poVWob"]');
+                // Get sender name from parent container (HNucUd)
+                const parentContainer = userContainer.parentElement;
+                const senderElement = parentContainer?.querySelector('div[class*="poVWob"]');
                 console.log('CHAT_SCAN: Raw sender element found:', senderElement);
                 console.log('CHAT_SCAN: Sender element HTML:', senderElement?.outerHTML);
                 const senderName = senderElement?.textContent?.trim();
 
                 const safeSenderName = senderName || 'Unknown';
-                console.log('CHAT_SCAN: Processing user container:', {
-                  senderName: safeSenderName,
-                  containerHTML: userContainer.outerHTML.substring(0, 200) + '...'
-                });
+                const containerSignature = parentContainer?.outerHTML + '|' + userContainer.outerHTML;
+
+
+                // Skip if it's the bot itself (You is the bot's display name in English interface)
+                if (safeSenderName === 'You') {
+                  console.log('CHAT_SCAN: Skipping message from bot (You)');
+                  processedContainers.add(containerSignature); // Still mark as processed to avoid reprocessing
+                  continue;
+                }
 
                 // Find all individual messages within this user container
                 const messageElements = userContainer.querySelectorAll('div[data-message-id]');
@@ -856,32 +871,36 @@ export class GoogleMeetBot extends MeetBotBase {
 
                   console.log('CHAT_SCAN: Processing message ID:', messageId);
 
-                  // Skip if already processed or no messageId
-                  if (!messageId || processedMessageIds.has(messageId)) {
-                    console.log('CHAT_SCAN: Skipping already processed message');
-                    continue;
-                  }
-
-                  // Get message content
+                  // Get message content first
                   const contentElement = messageElement.querySelector('div[jsname="dTKtvb"] div');
                   const messageContent = contentElement?.textContent?.trim();
 
-                  console.log('CHAT_SCAN: Message content found:', messageContent);
+                  // Skip if already processed or no messageId or no content or container already processed
+                  if (!messageId || !messageContent || processedMessageIds.has(messageId) || processedMessageContents.has(messageContent) || processedContainers.has(containerSignature)) {
+                    console.log('CHAT_SCAN: Skipping already processed message - ID:', messageId, 'Content hash:', messageContent?.substring(0, 20) + '...', 'Container processed:', processedContainers.has(containerSignature));
+                    continue;
+                  }
 
-                  // Process ALL messages (including bot messages) for debugging
-                  if (messageContent) {
-                    console.log('CHAT_SCAN: ========== NEW MESSAGE DETECTED! ==========');
+                  // Only process user messages (not bot's own replies or bot's own messages)
+                  if (messageContent && !messageContent.includes('tôi đã nhận được tin nhắn') && safeSenderName !== 'You') {
+                    console.log('CHAT_SCAN: ========== NEW USER MESSAGE DETECTED! ==========');
                     console.log('CHAT_SCAN: Sender:', safeSenderName);
                     console.log('CHAT_SCAN: Message:', messageContent);
                     console.log('CHAT_SCAN: Message ID:', messageId);
-                    console.log('CHAT_SCAN: ======================================');
+                    console.log('CHAT_SCAN: =================================================');
 
                     // Send reply with sender name and message content
                     console.log('CHAT_SCAN: About to send reply for message:', messageContent, 'from sender:', safeSenderName);
                     await sendChatReply(messageContent, safeSenderName);
 
-                    // Mark as processed
+                    // Mark as processed (both by ID, content, and container)
                     processedMessageIds.add(messageId);
+                    processedMessageContents.add(messageContent);
+                    processedContainers.add(containerSignature);
+                  } else if (messageContent && messageContent.includes('tôi đã nhận được tin nhắn')) {
+                    console.log('CHAT_SCAN: Skipping bot reply message:', messageContent.substring(0, 50) + '...');
+                  } else if (safeSenderName === 'You') {
+                    console.log('CHAT_SCAN: Skipping message from bot (You):', messageContent?.substring(0, 50) + '...' || 'undefined');
                   } else {
                     console.log('CHAT_SCAN: No content found in message ID:', messageId);
                   }
