@@ -5,7 +5,7 @@ import { UnsupportedMeetingError, WaitingAtLobbyRetryError } from '../error';
 import { patchBotStatus } from '../services/botService';
 import { handleUnsupportedMeetingError, handleWaitingAtLobbyError, MeetBotBase } from './MeetBotBase';
 import { v4 } from 'uuid';
-import { IUploader, UploadResult } from '../middleware/disk-uploader';
+import { IUploader } from '../middleware/disk-uploader';
 import { Logger } from 'winston';
 import { browserLogCaptureCallback } from '../util/logger';
 import { getWaitingPromise } from '../lib/promise';
@@ -621,15 +621,7 @@ export class GoogleMeetBot extends MeetBotBase {
       if (await sendButton.count() > 0 && !(await sendButton.isDisabled())) {
         await sendButton.click();
         this._logger.info('CHAT: Clicked "Send a message" button');
-
-        // Immediately close the chat panel after sending
-        const closeButton = await this.page.getByRole('button', { name: 'Close' });
-        if (await closeButton.count() > 0) {
-          await closeButton.click();
-          this._logger.info('CHAT: Closed chat panel after sending message');
-        } else {
-          this._logger.warn('CHAT: Close button not found');
-        }
+        await this.page.waitForTimeout(1000); // Wait for message to send
       } else {
         this._logger.warn('CHAT: "Send a message" button not clickable or disabled');
       }
@@ -639,6 +631,69 @@ export class GoogleMeetBot extends MeetBotBase {
     } catch (error) {
       // Log and continue - chat is not critical to recording functionality
       this._logger.info('CHAT: Failed to send chat message, continuing with recording...', { error: error.message });
+    }
+  }
+
+  private async sendReplyMessage(messageContent: string): Promise<void> {
+    try {
+      console.log('CHAT_REPLY: === STARTING REPLY PROCESS ===');
+      this._logger.info('CHAT_REPLY: Sending reply message...', { messageContent });
+
+      // Open chat panel (same as initial message)
+      console.log('CHAT_REPLY: Looking for chat button...');
+      const chatButton = await this.page.getByRole('button', { name: /Chat with everyone/i });
+      const buttonCount = await chatButton.count();
+      console.log('CHAT_REPLY: Chat button count:', buttonCount);
+
+      if (buttonCount > 0) {
+        console.log('CHAT_REPLY: Clicking chat button...');
+        await chatButton.click();
+        await this.page.waitForTimeout(1000);
+        this._logger.info('CHAT_REPLY: Opened chat panel');
+        console.log('CHAT_REPLY: Chat panel should be open now');
+      } else {
+        console.log('CHAT_REPLY: Chat button not found');
+        this._logger.warn('CHAT_REPLY: Chat button not found');
+        return;
+      }
+
+      // Send reply message (same as initial message)
+      console.log('CHAT_REPLY: Looking for chat input...');
+      console.log('CHAT_REPLY: Message content received:', messageContent);
+      console.log('CHAT_REPLY: Reply text ready to send:', messageContent);
+
+      const chatInput = await this.page.locator('textarea[aria-label="Send a message"]');
+      console.log('CHAT_REPLY: Chat input found, filling message...');
+      await chatInput.waitFor({ timeout: 5000 });
+      await chatInput.fill(messageContent);
+      this._logger.info('CHAT_REPLY: Filled reply message');
+      console.log('CHAT_REPLY: Message filled successfully');
+
+      // Click send button (same as initial message)
+      console.log('CHAT_REPLY: Looking for send button...');
+      const sendButton = await this.page.getByRole('button', { name: 'Send a message' });
+      const sendButtonCount = await sendButton.count();
+      const isDisabled = await sendButton.isDisabled();
+      console.log('CHAT_REPLY: Send button count:', sendButtonCount, 'disabled:', isDisabled);
+
+      if (sendButtonCount > 0 && !isDisabled) {
+        console.log('CHAT_REPLY: Clicking send button...');
+        await sendButton.click();
+        this._logger.info('CHAT_REPLY: Sent reply message successfully');
+        console.log('CHAT_REPLY: Send button clicked successfully');
+      } else {
+        console.log('CHAT_REPLY: Send button not clickable');
+        this._logger.warn('CHAT_REPLY: Send button not clickable');
+      }
+
+      console.log('CHAT_REPLY: === REPLY PROCESS COMPLETED ===');
+
+    } catch (error) {
+      console.error('CHAT_REPLY: ERROR in sendReplyMessage:', error);
+      this._logger.warn('CHAT_REPLY: Failed to send reply message', {
+        error: error.message,
+        messageContent
+      });
     }
   }
 
@@ -675,6 +730,15 @@ export class GoogleMeetBot extends MeetBotBase {
       }
     });
 
+    await this.page.exposeFunction('screenAppSendChatReply', async (slightlySecretId: string, replyText: string) => {
+      if (slightlySecretId !== this.slightlySecretId) return;
+      try {
+        await this.sendReplyMessage(replyText);
+      } catch (error) {
+        console.error('Could not send chat reply:', error);
+      }
+    });
+
     // Inject the MediaRecorder code into the browser context using page.evaluate
     await this.page.evaluate(
       async ({ teamId, duration, inactivityLimit, userId, slightlySecretId, activateInactivityDetectionAfter, activateInactivityDetectionAfterMinutes, primaryMimeType, secondaryMimeType }:
@@ -683,6 +747,8 @@ export class GoogleMeetBot extends MeetBotBase {
         let inactivityParticipantDetectionTimeout: NodeJS.Timeout;
         let inactivitySilenceDetectionTimeout: NodeJS.Timeout;
         let isOnValidGoogleMeetPageInterval: NodeJS.Timeout;
+        let chatScanInterval: NodeJS.Timeout;
+        const processedMessageIds = new Set();
 
         const sendChunkToServer = async (chunk: ArrayBuffer) => {
           function arrayBufferToBase64(buffer: ArrayBuffer) {
@@ -758,6 +824,94 @@ export class GoogleMeetBot extends MeetBotBase {
           let dismissModalsInterval: NodeJS.Timeout;
           let lastDimissError: Error | null = null;
 
+          // Chat message scanning and reply functions
+          async function scanAndReplyChatMessages() {
+            try {
+              console.log('CHAT_SCAN: Starting message scan...');
+
+              // Find all user message containers
+              const userContainers = document.querySelectorAll('div[class*="beTDc"]');
+
+              console.log('CHAT_SCAN: Found', userContainers.length, 'user containers');
+
+              for (const userContainer of userContainers) {
+                // Get sender name
+                const senderElement = userContainer.querySelector('div[class*="poVWob"]');
+                console.log('CHAT_SCAN: Raw sender element found:', senderElement);
+                console.log('CHAT_SCAN: Sender element HTML:', senderElement?.outerHTML);
+                const senderName = senderElement?.textContent?.trim();
+
+                const safeSenderName = senderName || 'Unknown';
+                console.log('CHAT_SCAN: Processing user container:', {
+                  senderName: safeSenderName,
+                  containerHTML: userContainer.outerHTML.substring(0, 200) + '...'
+                });
+
+                // Find all individual messages within this user container
+                const messageElements = userContainer.querySelectorAll('div[data-message-id]');
+                console.log('CHAT_SCAN: Found', messageElements.length, 'messages in this container');
+
+                for (const messageElement of messageElements) {
+                  const messageId = messageElement.getAttribute('data-message-id');
+
+                  console.log('CHAT_SCAN: Processing message ID:', messageId);
+
+                  // Skip if already processed or no messageId
+                  if (!messageId || processedMessageIds.has(messageId)) {
+                    console.log('CHAT_SCAN: Skipping already processed message');
+                    continue;
+                  }
+
+                  // Get message content
+                  const contentElement = messageElement.querySelector('div[jsname="dTKtvb"] div');
+                  const messageContent = contentElement?.textContent?.trim();
+
+                  console.log('CHAT_SCAN: Message content found:', messageContent);
+
+                  // Process ALL messages (including bot messages) for debugging
+                  if (messageContent) {
+                    console.log('CHAT_SCAN: ========== NEW MESSAGE DETECTED! ==========');
+                    console.log('CHAT_SCAN: Sender:', safeSenderName);
+                    console.log('CHAT_SCAN: Message:', messageContent);
+                    console.log('CHAT_SCAN: Message ID:', messageId);
+                    console.log('CHAT_SCAN: ======================================');
+
+                    // Send reply with sender name and message content
+                    console.log('CHAT_SCAN: About to send reply for message:', messageContent, 'from sender:', safeSenderName);
+                    await sendChatReply(messageContent, safeSenderName);
+
+                    // Mark as processed
+                    processedMessageIds.add(messageId);
+                  } else {
+                    console.log('CHAT_SCAN: No content found in message ID:', messageId);
+                  }
+                }
+              }
+            } catch (error) {
+              console.error('CHAT_SCAN: Error scanning messages', error);
+            }
+          }
+
+          async function sendChatReply(messageContent: string, senderName: string) {
+            console.log('CHAT_REPLY: === BROWSER CONTEXT - STARTING REPLY ===');
+            console.log('CHAT_REPLY: Message content:', messageContent);
+            console.log('CHAT_REPLY: Sender name:', senderName);
+            console.log('CHAT_REPLY: Slightly secret ID:', slightlySecretId);
+
+            const replyText = `tôi đã nhận được tin nhắn "${messageContent}" từ "${senderName}"`;
+            console.log('CHAT_REPLY: Full reply text:', replyText);
+            console.log('CHAT_REPLY: Calling screenAppSendChatReply...');
+
+            try {
+              await (window as any).screenAppSendChatReply(slightlySecretId, replyText);
+              console.log('CHAT_REPLY: screenAppSendChatReply called successfully');
+            } catch (error) {
+              console.error('CHAT_REPLY: Error calling screenAppSendChatReply:', error);
+            }
+
+            console.log('CHAT_REPLY: === BROWSER CONTEXT - REPLY COMPLETED ===');
+          }
+
           const stopTheRecording = async () => {
             mediaRecorder.stop();
             stream.getTracks().forEach((track) => track.stop());
@@ -779,6 +933,11 @@ export class GoogleMeetBot extends MeetBotBase {
 
             if (isOnValidGoogleMeetPageInterval) {
               clearInterval(isOnValidGoogleMeetPageInterval);
+            }
+
+            if (chatScanInterval) {
+              clearInterval(chatScanInterval);
+              console.log('CHAT_SCAN: Stopped chat message monitoring');
             }
 
             if (dismissModalsInterval) {
@@ -1052,6 +1211,10 @@ export class GoogleMeetBot extends MeetBotBase {
           detectModalsAndDismiss();
 
           detectMeetingIsOnAValidPage();
+
+          // Start chat message scanning (every 3 seconds)
+          chatScanInterval = setInterval(scanAndReplyChatMessages, 3000);
+          console.log('CHAT_SCAN: Started chat message monitoring');
 
           // Cancel this timeout when stopping the recording
           // Stop recording after `duration` minutes upper limit
