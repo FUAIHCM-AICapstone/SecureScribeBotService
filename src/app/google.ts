@@ -1,5 +1,5 @@
 import { AxiosError } from 'axios';
-import { GoogleMeetBot } from '../bots/GoogleMeetBot';
+import { GoogleMeetBot } from '../bots/GoogleMeetBot/GoogleMeetBot';
 import { IUploader } from '../middleware/disk-uploader';
 import express, { Request, Response } from 'express';
 import { createCorrelationId, loggerFactory } from '../util/logger';
@@ -46,11 +46,23 @@ const joinGoogleMeet = async (req: Request, res: Response) => {
   try {
     // Try to add the job to the store
     const jobResult = await globalJobStore.addJob(async () => {
+      console.log('📁 Starting DiskUploader initialization...', { userId, teamId, botId, eventId });
+
       // Initialize disk uploader
       const entityId = botId ?? eventId;
       const tempId = `${userId}${entityId}0`; // Using 0 as retry count
       const tempFileId = encodeFileNameSafebase64(tempId);
       const namePrefix = getRecordingNamePrefix('google');
+
+      console.log('📁 DiskUploader params:', {
+        bearerToken: bearerToken?.substring(0, 10) + '...',
+        teamId,
+        timezone,
+        userId,
+        botId: botId ?? '',
+        namePrefix,
+        tempFileId
+      });
 
       const uploader: IUploader = await DiskUploader.initialize(
         bearerToken,
@@ -63,9 +75,16 @@ const joinGoogleMeet = async (req: Request, res: Response) => {
         logger,
       );
 
+      console.log('✅ DiskUploader initialized successfully');
+
       // Create and join the meeting
+      console.log('🤖 Creating GoogleMeetBot...', { correlationId });
       const bot = new GoogleMeetBot(logger, correlationId);
+      console.log('🤖 GoogleMeetBot created, starting join process...');
+
       await bot.join({ url, name, bearerToken, teamId, timezone, userId, eventId, botId, uploader, webhookUrl });
+
+      console.log('🎉 Meeting join completed successfully');
 
       logger.info('Joined Google Meet event successfully.', userId, teamId);
     }, logger);

@@ -132,8 +132,8 @@ export type UnsupportedMeetingCategory = {
 }
 
 export const categories = [
-  'WaitingAtLobby', 
-  'Recording', 
+  'WaitingAtLobby',
+  'Recording',
   'Integration',
   'UnsupportedMeeting',
   'Platform',
@@ -153,8 +153,8 @@ export const subCategories = [
   'BotNotResponding',
 ] as const;
 export const logCategories: {
-  category: typeof categories[number], 
-  subCategory: typeof subCategories[number][], 
+  category: typeof categories[number],
+  subCategory: typeof subCategories[number][],
 }[] = [
   {
     category: 'WaitingAtLobby',
@@ -197,4 +197,60 @@ export const logCategories: {
 export type LogCategory = typeof logCategories[number]['category'];
 export type LogSubCategory<C extends LogCategory> = (typeof logCategories[number] & { category: C })['subCategory'][number];
 
+// Import required types for handler interfaces
+import { JoinParams } from './bots/AbstractMeetBot';
+import { IUploader } from './middleware/disk-uploader';
+
 export type UploadType = 'screenapp' | 's3';
+
+// Google Meet Bot Handler Types
+export interface IGoogleMeetJoinHandler {
+  joinMeeting(params: JoinParams & { pushState(state: BotStatus): void }): Promise<void>;
+}
+
+export interface IGoogleMeetChatHandler {
+  sendChatMessage(): Promise<void>;
+  sendReplyMessage(messageContent: string): Promise<void>;
+}
+
+export interface IGoogleMeetRecordingHandler {
+  recordMeetingPage(params: {
+    teamId: string;
+    userId: string;
+    eventId?: string;
+    botId?: string;
+    uploader: IUploader;
+  }): Promise<void>;
+}
+
+export interface IGoogleMeetPageValidator {
+  verifyGoogleMeetPage(): Promise<'SIGN_IN_PAGE' | 'GOOGLE_MEET_PAGE' | 'UNSUPPORTED_PAGE' | null>;
+}
+
+export interface IGoogleMeetLobbyHandler {
+  waitAtLobby(): Promise<boolean>;
+}
+
+export interface IGoogleMeetModalHandler {
+  dismissDeviceCheck(): Promise<void>;
+  dismissGotItModals(): Promise<void>;
+}
+
+export interface IGoogleMeetInactivityHandler {
+  setupInactivityDetection(params: {
+    duration: number;
+    inactivityLimit: number;
+    onStopRecording: () => void;
+  }): void;
+}
+
+export interface GoogleMeetHandlerContext {
+  page: any;
+  logger: any;
+  correlationId: string;
+  slightlySecretId: string;
+  userId: string;
+  teamId: string;
+  botId?: string;
+  eventId?: string;
+}

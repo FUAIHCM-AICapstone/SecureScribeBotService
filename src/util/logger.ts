@@ -2,12 +2,17 @@ import { ConsoleMessage } from 'playwright';
 import { createLogger, format, transports, Logger } from 'winston';
 import { v5 as uuidv5, v4 } from 'uuid';
 
-const NAMESPACE = uuidv5.DNS; 
+const NAMESPACE = uuidv5.DNS;
 
 export function loggerFactory(correlationId: string, botType?: string): Logger {
+  // Debug: Check if we're in a container environment
+  const isContainer = process.env.NODE_ENV === 'production' || !!process.env.DOCKER_CONTAINER;
+
   return createLogger({
+    level: 'info',
     format: format.combine(
       format.timestamp(),
+      format.errors({ stack: true }),
       format((info) => {
         info.correlationId = correlationId;
         if (botType) {
@@ -16,12 +21,22 @@ export function loggerFactory(correlationId: string, botType?: string): Logger {
         return info;
       })(),
       format.printf(({ timestamp, level, message, correlationId, botType, ...meta }) => {
-        const metaStr = Object.keys(meta).length ? JSON.stringify(meta) : '';
+        const metaStr = Object.keys(meta).length ? JSON.stringify(meta, null, 2) : '';
         const botTypeStr = botType ? ` [botType: ${botType}]` : '';
-        return `[${timestamp}] [${level}] [correlationId: ${correlationId}]${botTypeStr} ${message} ${metaStr}`;
+        return `[${timestamp}] [${level}] [correlationId: ${correlationId}]${botTypeStr} ${message}${metaStr ? '\n' + metaStr : ''}`;
       }),
     ),
-    transports: [new transports.Console()],
+    transports: [
+      new transports.Console({
+        handleExceptions: true,
+        handleRejections: true,
+        format: format.combine(
+          format.colorize(),
+          format.simple()
+        )
+      })
+    ],
+    exitOnError: false,
   });
 }
 
@@ -46,7 +61,7 @@ export const browserLogCaptureCallback = async (logger: Logger, msg: ConsoleMess
         logger.info(`[Playwright chrome logger] ${msg.text()}`, ...values);
         break;
     }
-  } catch(err) {
+  } catch (err) {
     logger.info('Failed to log browser messages...', err?.message);
   }
 };
@@ -78,7 +93,7 @@ export const createCorrelationId = ({
       method: 'v5'
     });
     return id;
-  } catch(err) {
+  } catch (err) {
     console.error('Unable to create deterministic correlationId', { userId, teamId, err });
     const id = v4();
     console.log(`[correlationId:${id}]`, {
@@ -96,7 +111,7 @@ export const createCorrelationId = ({
 
 export const getErrorType = (error: unknown): string => {
   if (!error) return 'Unknown';
-  
+
   if (error instanceof Error) {
     // Handle KnownError and its subclasses
     if (error.constructor.name === 'WaitingAtLobbyError') {
@@ -111,7 +126,7 @@ export const getErrorType = (error: unknown): string => {
     if (error.constructor.name === 'KnownError') {
       return 'KnownError';
     }
-    
+
     // Handle other common error types
     if (error.name === 'AxiosError' || error.constructor.name === 'AxiosError') {
       return 'AxiosError';
@@ -119,11 +134,20 @@ export const getErrorType = (error: unknown): string => {
     if (error.name === 'TimeoutError' || error.constructor.name === 'TimeoutError') {
       return 'TimeoutError';
     }
-    
+
     // Return the constructor name for other Error instances
     return error.constructor.name || error.name || 'UnknownError';
   }
-  
+
+  // Handle non-Error objects
+  if (typeof error === 'object' && error !== null) {
+    return 'ObjectError';
+  }
+
+  if (typeof error === 'string') {
+    return 'StringError';
+  }
+
   return 'Unknown';
 };
 

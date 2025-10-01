@@ -10,7 +10,7 @@ export class JobStore {
   private shutdownRequested: boolean = false;
 
   async addJob<T>(
-    task: () => Promise<T>, 
+    task: () => Promise<T>,
     logger: Logger,
     retryCount: number = 0
   ): Promise<{ accepted: boolean }> {
@@ -19,16 +19,19 @@ export class JobStore {
     }
 
     this.isRunning = true;
-    
+
     // Execute the task asynchronously without waiting for completion
     this.executeTaskWithRetry(task, logger, retryCount).then(() => {
       logger.info('LogBasedMetric Bot has finished recording meeting successfully.');
     }).catch((error) => {
-      const errorType = getErrorType(error);
-      if (error instanceof KnownError) {
-        logger.error('KnownError JobStore is permanently exiting:', { error });
+      // Ensure error is properly formatted for logging
+      const safeError = error instanceof Error ? error : new Error(String(error || 'Unknown error'));
+      const errorType = getErrorType(safeError);
+
+      if (safeError instanceof KnownError) {
+        logger.error('KnownError JobStore is permanently exiting:', { error: safeError });
       } else {
-        logger.error('Error executing task after multiple retries:', { error });
+        logger.error('Error executing task after multiple retries:', { error: safeError });
       }
       logger.error(`LogBasedMetric Bot has permanently failed. [errorType: ${errorType}]`);
     }).finally(() => {
@@ -47,14 +50,17 @@ export class JobStore {
     try {
       await task();
     } catch (error) {
-      if (error instanceof KnownError && !error.retryable) {
-        logger.error('KnownError is not retryable:', error.name, error.message);
-        throw error;
+      // Ensure error is properly formatted before processing
+      const safeError = error instanceof Error ? error : new Error(String(error || 'Unknown error'));
+
+      if (safeError instanceof KnownError && !safeError.retryable) {
+        logger.error('KnownError is not retryable:', safeError.name, safeError.message);
+        throw safeError;
       }
 
-      if (error instanceof KnownError && error.retryable && (retryCount + 1) >= error.maxRetries) {
-        logger.error(`KnownError: ${error.maxRetries} tries consumed:`, error.name, error.message);
-        throw error;
+      if (safeError instanceof KnownError && safeError.retryable && (retryCount + 1) >= safeError.maxRetries) {
+        logger.error(`KnownError: ${safeError.maxRetries} tries consumed:`, safeError.name, safeError.message);
+        throw safeError;
       }
 
       retryCount += 1;
@@ -65,7 +71,7 @@ export class JobStore {
         }
         await this.executeTaskWithRetry(task, logger, retryCount);
       } else {
-        throw error;
+        throw safeError;
       }
     }
   }
@@ -98,7 +104,7 @@ export class JobStore {
     }
 
     console.log('Waiting for ongoing tasks to complete...');
-    
+
     return new Promise<void>((resolve) => {
       const checkCompletion = () => {
         if (!this.isRunning) {
@@ -111,4 +117,4 @@ export class JobStore {
       checkCompletion();
     });
   }
-} 
+}
