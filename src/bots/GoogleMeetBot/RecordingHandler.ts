@@ -320,12 +320,12 @@ export class GoogleMeetRecordingHandler implements IGoogleMeetRecordingHandler {
                       continue;
                     }
 
-                    // Only process user messages, not bot messages or bot replies
+                    // Only process user messages that mention @Meobeo
                     if (messageContent &&
                       !messageContent.includes('tôi đã nhận được tin nhắn') &&
                       !messageContent.includes('Đã bắt đầu ghi hình') &&
                       safeSenderName !== 'You' &&
-                      messageContent.length > 5) { // Filter out very short messages
+                      messageContent.includes('@Meobeo')) { // Only respond to messages containing @Meobeo
 
                       const replyText = `tôi đã nhận được tin nhắn "${messageContent}" từ "${safeSenderName}"`;
 
