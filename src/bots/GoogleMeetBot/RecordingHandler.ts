@@ -62,9 +62,21 @@ export class GoogleMeetRecordingHandler implements IGoogleMeetRecordingHandler {
     this.logger.info('Setting up data upload functionality...');
     await this.setupDataUpload(uploader);
 
-    // Setup meeting end handler
+    // Create waiting promise
+    this.logger.info('Waiting for recording duration', config.maxRecordingDuration, 'minutes...');
+    const processingTime = 0.2 * 60 * 1000;
+    const waitingPromise = getWaitingPromise(processingTime + duration);
+
+    waitingPromise.promise.then(async () => {
+      this.logger.info('Closing the browser...');
+      await this.context.page.context().browser()?.close();
+
+      this.logger.info('All done ✨', { eventId, botId, userId, teamId });
+    });
+
+    // Setup meeting end handler with resolveEarly
     this.logger.info('Setting up meeting end handler...');
-    await this.setupMeetingEndHandler();
+    await this.setupMeetingEndHandler(waitingPromise.resolveEarly);
 
     // Setup chat reply handler
     this.logger.info('Setting up chat reply handler...');
@@ -78,17 +90,6 @@ export class GoogleMeetRecordingHandler implements IGoogleMeetRecordingHandler {
     this.logger.info('Injecting recording code into browser...');
     await this.injectRecordingCode(teamId, duration, inactivityLimit, userId);
     this.logger.info('Recording code injection completed');
-
-    this.logger.info('Waiting for recording duration', config.maxRecordingDuration, 'minutes...');
-    const processingTime = 0.2 * 60 * 1000;
-    const waitingPromise = getWaitingPromise(processingTime + duration);
-
-    waitingPromise.promise.then(async () => {
-      this.logger.info('Closing the browser...');
-      await this.context.page.context().browser()?.close();
-
-      this.logger.info('All done ✨', { eventId, botId, userId, teamId });
-    });
 
     await waitingPromise.promise;
   }
@@ -112,12 +113,13 @@ export class GoogleMeetRecordingHandler implements IGoogleMeetRecordingHandler {
     });
   }
 
-  private async setupMeetingEndHandler(): Promise<void> {
+  private async setupMeetingEndHandler(resolveEarly: () => void): Promise<void> {
     await this.context.page.exposeFunction('screenAppMeetEnd', (slightlySecretId: string) => {
       if (slightlySecretId !== this.context.slightlySecretId) return;
       try {
-        this.logger.info('Attempt to end meeting early...');
-        // This will be handled by the waiting promise mechanism
+        this.logger.info('Attempt to end meeting early - resolving waiting promise...');
+        // Resolve the waiting promise early to continue the flow
+        resolveEarly();
       } catch (error) {
         console.error('Could not process meeting end event', error);
       }
@@ -128,6 +130,8 @@ export class GoogleMeetRecordingHandler implements IGoogleMeetRecordingHandler {
     await this.context.page.exposeFunction('screenAppSendChatReply', async (slightlySecretId: string, replyText: string) => {
       if (slightlySecretId !== this.context.slightlySecretId) return;
       try {
+        // Call sendReplyMessage with replyText as messageContent
+        // Message ID will be tracked internally by ChatHandler
         await this.chatHandler.sendReplyMessage(replyText);
       } catch (error) {
         console.error('Could not send chat reply:', error);
@@ -144,6 +148,7 @@ export class GoogleMeetRecordingHandler implements IGoogleMeetRecordingHandler {
         let inactivitySilenceDetectionTimeout: NodeJS.Timeout;
         let isOnValidGoogleMeetPageInterval: NodeJS.Timeout | null = null;
         let chatScanInterval: NodeJS.Timeout;
+        let isRecordingStopped = false;
         const processedMessageIds = new Set();
         const processedMessageContents = new Set();
         const processedContainers = new Set();
@@ -320,6 +325,7 @@ export class GoogleMeetRecordingHandler implements IGoogleMeetRecordingHandler {
                     const messageContent = contentElement?.textContent?.trim();
 
                     if (!messageId || !messageContent || processedMessageIds.has(messageId) || processedMessageContents.has(messageContent) || processedContainers.has(containerSignature)) {
+                      console.log('CHAT_SCAN: Skipping already processed message:', { messageId, messageContent: messageContent?.substring(0, 50) });
                       continue;
                     }
 
@@ -337,15 +343,20 @@ export class GoogleMeetRecordingHandler implements IGoogleMeetRecordingHandler {
                       const replyText = `tôi đã nhận được tin nhắn "${messageContent}" từ "${safeSenderName}"`;
                       console.log('CHAT_SCAN: Sending reply:', replyText);
 
+                      // Mark as processed BEFORE sending reply to prevent duplicate processing
+                      processedMessageIds.add(messageId);
+                      processedMessageContents.add(messageContent);
+                      processedContainers.add(containerSignature);
+
                       try {
                         await (window as any).screenAppSendChatReply(slightlySecretId, replyText);
                         console.log('CHAT_SCAN: Reply sent successfully');
-
-                        processedMessageIds.add(messageId);
-                        processedMessageContents.add(messageContent);
-                        processedContainers.add(containerSignature);
                       } catch (replyError) {
                         console.error('CHAT_SCAN: Error sending reply:', replyError);
+                        // Remove from processed sets if reply failed, so it can be retried
+                        processedMessageIds.delete(messageId);
+                        processedMessageContents.delete(messageContent);
+                        processedContainers.delete(containerSignature);
                       }
                     }
                   }
@@ -355,28 +366,88 @@ export class GoogleMeetRecordingHandler implements IGoogleMeetRecordingHandler {
               }
             };
 
-            chatScanInterval = setInterval(scanAndReplyChatMessages, 3000);
+            chatScanInterval = setInterval(scanAndReplyChatMessages, 5000); // Increased to 5 seconds to reduce duplicate detection
             console.log('CHAT_SCAN: Started chat message monitoring');
           };
 
           const stopTheRecording = async () => {
-            mediaRecorder.stop();
-            stream.getTracks().forEach((track) => track.stop());
-
-            clearTimeout(timeoutId);
-            clearTimeout(inactivityParticipantDetectionTimeout);
-            clearTimeout(inactivitySilenceDetectionTimeout);
-
-            if (isOnValidGoogleMeetPageInterval) {
-              clearInterval(isOnValidGoogleMeetPageInterval);
+            if (isRecordingStopped) {
+              console.log('RECORDING_STOP: Recording already stopped, skipping...');
+              return;
             }
 
-            if (chatScanInterval) {
-              clearInterval(chatScanInterval);
-              console.log('CHAT_SCAN: Stopped chat message monitoring');
+            isRecordingStopped = true;
+            console.log('RECORDING_STOP: Starting recording stop process...');
+
+            try {
+              // Stop media recorder if it exists and is recording
+              if (mediaRecorder && mediaRecorder.state === 'recording') {
+                mediaRecorder.stop();
+                console.log('RECORDING_STOP: Media recorder stopped');
+              } else {
+                console.log('RECORDING_STOP: Media recorder not recording or not available');
+              }
+            } catch (error) {
+              console.error('RECORDING_STOP: Error stopping media recorder:', error);
             }
 
-            (window as any).screenAppMeetEnd(slightlySecretId);
+            try {
+              // Stop all stream tracks if stream exists
+              if (stream) {
+                stream.getTracks().forEach((track) => {
+                  if (track.readyState !== 'ended') {
+                    track.stop();
+                  }
+                });
+                console.log('RECORDING_STOP: Stream tracks stopped');
+              } else {
+                console.log('RECORDING_STOP: Stream not available');
+              }
+            } catch (error) {
+              console.error('RECORDING_STOP: Error stopping stream tracks:', error);
+            }
+
+            // Clear timeouts
+            try {
+              if (timeoutId) {
+                clearTimeout(timeoutId);
+                console.log('RECORDING_STOP: Recording timeout cleared');
+              }
+              if (inactivityParticipantDetectionTimeout) {
+                clearTimeout(inactivityParticipantDetectionTimeout);
+                console.log('RECORDING_STOP: Participant detection timeout cleared');
+              }
+              if (inactivitySilenceDetectionTimeout) {
+                clearTimeout(inactivitySilenceDetectionTimeout);
+                console.log('RECORDING_STOP: Silence detection timeout cleared');
+              }
+            } catch (error) {
+              console.error('RECORDING_STOP: Error clearing timeouts:', error);
+            }
+
+            // Clear intervals
+            try {
+              if (isOnValidGoogleMeetPageInterval) {
+                clearInterval(isOnValidGoogleMeetPageInterval);
+                console.log('RECORDING_STOP: Page validation interval cleared');
+              }
+              if (chatScanInterval) {
+                clearInterval(chatScanInterval);
+                console.log('RECORDING_STOP: Chat scan interval cleared');
+              }
+            } catch (error) {
+              console.error('RECORDING_STOP: Error clearing intervals:', error);
+            }
+
+            // Notify parent about meeting end
+            try {
+              (window as any).screenAppMeetEnd(slightlySecretId);
+              console.log('RECORDING_STOP: Meeting end notification sent');
+            } catch (error) {
+              console.error('RECORDING_STOP: Error sending meeting end notification:', error);
+            }
+
+            console.log('RECORDING_STOP: Recording stop process completed');
           };
 
           // Setup participant detection

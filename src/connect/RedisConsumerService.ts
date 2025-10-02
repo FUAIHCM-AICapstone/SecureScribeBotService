@@ -42,12 +42,10 @@ export class RedisConsumerService {
 
       console.info('Redis consumer service started');
       this.startMessageLoop().catch((error) => {
-        console.error('Failed to start message loop:', error);
         throw error;
       });
 
     } catch (error) {
-      console.error('Failed to start Redis consumer service:', error);
       throw error;
     }
   }
@@ -93,7 +91,6 @@ export class RedisConsumerService {
           break;
         }
 
-        console.error('Error in message loop:', error);
 
         // Attempt to reconnect if connection is lost
         if (!messageBroker.isConnected()) {
@@ -206,7 +203,6 @@ export class RedisConsumerService {
           console.info('Waiting for messageBroker to reconnect...');
         }
       } catch (error) {
-        console.error('Error checking Redis connection:', error);
         // Schedule another reconnection attempt
         this.handleReconnection();
       } finally {

@@ -35,7 +35,7 @@ const constructRedisUri = () => {
   const port = process.env.REDIS_PORT || 6379;
   const username = process.env.REDIS_USERNAME;
   const password = process.env.REDIS_PASSWORD;
-  
+
   if (username && password) {
     return `redis://${username}:${password}@${host}:${port}`;
   } else if (password) {
@@ -55,7 +55,7 @@ export default {
   // Unset MAX_RECORDING_DURATION_MINUTES to use default upper limit on duration
   maxRecordingDuration: process.env.MAX_RECORDING_DURATION_MINUTES ?
     Number(process.env.MAX_RECORDING_DURATION_MINUTES) :
-    180, // There's an upper limit on meeting duration 3 hours 
+    180, // There's an upper limit on meeting duration 3 hours
   chromeExecutablePath: '/usr/bin/google-chrome', // We use Google Chrome with Playwright for recording
   inactivityLimit: 0.5,
   activateInactivityDetectionAfter: 0.5,
@@ -70,6 +70,9 @@ export default {
   redisUri: constructRedisUri(),
   uploaderFileExtension: process.env.UPLOADER_FILE_EXTENSION ? process.env.UPLOADER_FILE_EXTENSION : '.webm',
   isRedisEnabled: process.env.REDIS_CONSUMER_ENABLED === 'true',
+  // Redis message tracking settings
+  processedMessagesTTLMinutes: process.env.REDIS_MESSAGE_TTL_MINUTES ? Number(process.env.REDIS_MESSAGE_TTL_MINUTES) : 24 * 60, // 24 hours default
+  redisMessageTrackingEnabled: process.env.REDIS_MESSAGE_TRACKING_ENABLED !== 'true', // Enabled by default
   s3CompatibleStorage: {
     endpoint: process.env.S3_ENDPOINT,
     region: process.env.S3_REGION,

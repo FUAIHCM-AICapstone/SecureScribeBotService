@@ -1,15 +1,19 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { Logger } from 'winston';
 import { IGoogleMeetChatHandler } from '../../types';
+import messageBroker from '../../connect/messageBroker';
+import config from '../../config';
 
 export class GoogleMeetChatHandler implements IGoogleMeetChatHandler {
   private context: any;
   private logger: Logger;
+  private botId?: string;
 
   constructor(context: any, logger: Logger) {
     console.log('💬 ChatHandler constructor called');
     this.context = context;
     this.logger = logger;
+    this.botId = context.botId;
     console.log('✅ ChatHandler constructor completed');
   }
 
@@ -73,26 +77,66 @@ export class GoogleMeetChatHandler implements IGoogleMeetChatHandler {
       console.log('CHAT_REPLY: === STARTING REPLY PROCESS ===');
       this.logger.info('CHAT_REPLY: Sending reply message...', { messageContent });
 
-      // Open chat panel (same as initial message)
-      console.log('CHAT_REPLY: Looking for chat button...');
-      const chatButton = await this.context.page.getByRole('button', { name: /Chat with everyone/i });
-      const buttonCount = await chatButton.count();
-      console.log('CHAT_REPLY: Chat button count:', buttonCount);
+      // Generate message ID from content for tracking
+      const messageId = this.generateMessageId(messageContent);
 
-      if (buttonCount > 0) {
-        console.log('CHAT_REPLY: Clicking chat button...');
-        await chatButton.click();
-        await this.context.page.waitForTimeout(1000);
-        this.logger.info('CHAT_REPLY: Opened chat panel');
-      } else {
-        console.log('CHAT_REPLY: Chat button not found');
-        this.logger.warn('CHAT_REPLY: Chat button not found');
+      // Check Redis to avoid duplicate processing
+      if (this.botId && config.redisMessageTrackingEnabled) {
+        const isProcessed = await messageBroker.isMessageProcessed(messageId, this.botId);
+        if (isProcessed) {
+          console.log('CHAT_REPLY: Message already processed, skipping reply');
+          this.logger.info('CHAT_REPLY: Message already processed, skipping reply', { messageId });
+          return;
+        }
+      }
+
+      // Open chat panel with retry logic
+
+
+      // Retry opening chat panel up to 3 times
+      let chatOpened = false;
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          const chatInput = this.context.page.locator('textarea[aria-label="Send a message"]');
+          const isVisible = await chatInput.isVisible({ timeout: 2000 }).catch(() => false);
+
+          if (isVisible) {
+            // Additional check - try to focus on the textarea to ensure it's accessible
+            try {
+              await chatInput.focus();
+              await this.context.page.waitForTimeout(500);
+              console.log(`CHAT_REPLY: Chat panel opened and focused successfully on attempt ${attempt}`);
+              this.logger.info('CHAT_REPLY: Opened chat panel');
+              chatOpened = true;
+              break;
+            } catch (focusError) {
+              console.log(`CHAT_REPLY: Chat panel visible but cannot focus on attempt ${attempt}, retrying...`);
+            }
+          } else {
+            console.log(`CHAT_REPLY: Chat panel not visible after attempt ${attempt}, retrying...`);
+          }
+        } catch (error) {
+          console.log(`CHAT_REPLY: Error on attempt ${attempt}:`, error.message);
+        }
+      }
+
+      if (!chatOpened) {
+        console.log('CHAT_REPLY: Failed to open chat panel after 3 attempts');
+        this.logger.warn('CHAT_REPLY: Failed to open chat panel after retries');
         return;
       }
 
       const chatInput = await this.context.page.locator('textarea[aria-label="Send a message"]');
       console.log('CHAT_REPLY: Chat input found, filling message...');
-      await chatInput.waitFor({ timeout: 5000 });
+      await chatInput.waitFor({ timeout: 3000 });
+
+      // Final check before filling - ensure chat input is still accessible
+      const isStillVisible = await chatInput.isVisible().catch(() => false);
+      if (!isStillVisible) {
+        console.log('CHAT_REPLY: Chat input became hidden, aborting reply');
+        this.logger.warn('CHAT_REPLY: Chat input became hidden before sending');
+        return;
+      }
 
       // Clear existing content first to avoid duplicate
       await chatInput.fill('');
@@ -113,6 +157,15 @@ export class GoogleMeetChatHandler implements IGoogleMeetChatHandler {
       console.log('CHAT_REPLY: Clicking send button...');
       await sendButton.click();
 
+      // Mark message as processed in Redis (only if messageId provided and Redis tracking enabled)
+      if (messageId && this.botId && config.redisMessageTrackingEnabled) {
+        await messageBroker.markMessageAsProcessed(messageId, this.botId);
+        console.log('CHAT_REPLY: Message marked as processed in Redis');
+      }
+
+      // Message already marked as processed in RecordingHandler
+      // No need to mark again here
+
       console.log('CHAT_REPLY: === REPLY PROCESS COMPLETED ===');
 
     } catch (error) {
@@ -122,5 +175,16 @@ export class GoogleMeetChatHandler implements IGoogleMeetChatHandler {
         messageContent
       });
     }
+  }
+
+  private generateMessageId(messageContent: string): string {
+    // Simple hash function to generate consistent message ID from content
+    let hash = 0;
+    for (let i = 0; i < messageContent.length; i++) {
+      const char = messageContent.charCodeAt(i);
+      hash = ((hash << 5) - hash) + char;
+      hash = hash & hash; // Convert to 32-bit integer
+    }
+    return Math.abs(hash).toString(36);
   }
 }

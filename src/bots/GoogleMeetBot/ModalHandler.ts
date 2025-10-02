@@ -16,7 +16,6 @@ export class GoogleMeetModalHandler implements IGoogleMeetModalHandler {
 
   async dismissDeviceCheck(): Promise<void> {
     try {
-      this.logger.info('Clicking Continue without microphone and camera button...');
       await retryActionWithWait(
         'Clicking the "Continue without microphone and camera" button',
         async () => {
@@ -28,16 +27,13 @@ export class GoogleMeetModalHandler implements IGoogleMeetModalHandler {
         15000,
       );
     } catch (dismissError) {
-      this.logger.info('Continue without microphone and camera button is probably missing!...');
     }
   }
 
   async dismissGotItModals(): Promise<void> {
     try {
-      this.logger.info('Waiting for the "Got it" button...');
       await this.context.page.waitForSelector('button:has-text("Got it")', { timeout: 15000 });
 
-      this.logger.info('Going to click all visible "Got it" buttons...');
 
       let gotItButtonsClicked = 0;
       let previousButtonCount = -1;
@@ -72,7 +68,6 @@ export class GoogleMeetModalHandler implements IGoogleMeetModalHandler {
           try {
             await btn.click({ timeout: 5000 });
             gotItButtonsClicked++;
-            this.logger.info(`Clicked a "Got it" button #${gotItButtonsClicked}`);
 
             await this.context.page.waitForTimeout(2000);
           } catch (err) {
@@ -84,7 +79,6 @@ export class GoogleMeetModalHandler implements IGoogleMeetModalHandler {
       }
     } catch (error) {
       // Log and ignore this error
-      this.logger.info('"Got it" modals might be missing...', { error });
     }
   }
 }

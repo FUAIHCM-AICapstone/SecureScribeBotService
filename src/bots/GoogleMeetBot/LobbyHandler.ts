@@ -17,20 +17,13 @@ export class GoogleMeetLobbyHandler implements IGoogleMeetLobbyHandler {
 
   async waitAtLobby(): Promise<boolean> {
     try {
-      this.logger.info('Starting lobby wait process...', {
-        userId: this.context.userId,
-        teamId: this.context.teamId,
-        joinWaitTime: config.joinWaitTime
-      });
 
       const wanderingTime = config.joinWaitTime * 60 * 1000; // Give some time to admit the bot
-      this.logger.info('Lobby wait timeout set to:', { wanderingTime });
 
       let waitTimeout: NodeJS.Timeout;
       let waitInterval: NodeJS.Timeout;
 
       const waitAtLobbyPromise = new Promise<boolean>((resolveWaiting) => {
-        this.logger.info('Setting up lobby wait timeout...');
         waitTimeout = setTimeout(() => {
           this.logger.warn('Lobby wait timeout reached, resolving as false');
           clearInterval(waitInterval);
@@ -39,32 +32,25 @@ export class GoogleMeetLobbyHandler implements IGoogleMeetLobbyHandler {
 
         waitInterval = setInterval(async () => {
           try {
-            this.logger.info('Checking lobby mode status in interval...');
             const lobbyModeStatus = await this.detectLobbyMode();
-            this.logger.info('Lobby mode detection result:', { lobbyModeStatus });
 
             if (lobbyModeStatus === 'WAITING_FOR_HOST_TO_ADMIT_BOT') {
-              this.logger.info('Lobby Mode: Google Meet Bot is waiting for the host to admit it...', { userId: this.context.userId, teamId: this.context.teamId });
             } else if (lobbyModeStatus === 'WAITING_REQUEST_TIMEOUT') {
-              this.logger.info('Lobby Mode: Google Meet Bot join request timed out...', { userId: this.context.userId, teamId: this.context.teamId });
               clearInterval(waitInterval);
               clearTimeout(waitTimeout);
               resolveWaiting(false);
               return;
             } else if (lobbyModeStatus === 'LOBBY_MODE_NOT_ACTIVE') {
-              this.logger.info('Lobby Mode: Bot successfully entered the meeting', { userId: this.context.userId, teamId: this.context.teamId });
               clearInterval(waitInterval);
               clearTimeout(waitTimeout);
               resolveWaiting(true);
               return;
             } else {
-              this.logger.info('Lobby Mode: Unknown status, continuing to wait...', { lobbyModeStatus });
             }
 
             // Check if bot was denied access
             const botWasDeniedAccess = await this.checkAccessDenied();
             if (botWasDeniedAccess) {
-              this.logger.info('Google Meet Bot is denied access to the meeting...', { userId: this.context.userId, teamId: this.context.teamId });
               clearInterval(waitInterval);
               clearTimeout(waitTimeout);
               resolveWaiting(false);
@@ -77,7 +63,6 @@ export class GoogleMeetLobbyHandler implements IGoogleMeetLobbyHandler {
 
       return await waitAtLobbyPromise;
     } catch (lobbyError) {
-      this.logger.info('Closing the browser on error...', lobbyError);
       await this.context.page.context().browser()?.close();
       throw lobbyError;
     }
