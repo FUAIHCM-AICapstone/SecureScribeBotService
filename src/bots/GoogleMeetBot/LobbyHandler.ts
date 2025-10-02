@@ -9,10 +9,9 @@ export class GoogleMeetLobbyHandler implements IGoogleMeetLobbyHandler {
   private logger: Logger;
 
   constructor(context: any, logger: Logger) {
-    console.log('🎭 LobbyHandler constructor called');
+    this.logger.info('LOBBY: LobbyHandler initialized');
     this.context = context;
     this.logger = logger;
-    console.log('✅ LobbyHandler constructor completed');
   }
 
   async waitAtLobby(): Promise<boolean> {

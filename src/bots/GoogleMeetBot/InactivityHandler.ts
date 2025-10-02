@@ -5,9 +5,8 @@ export class GoogleMeetInactivityHandler implements IGoogleMeetInactivityHandler
   private context: any;
 
   constructor(context: any) {
-    console.log('⏰ InactivityHandler constructor called');
     this.context = context;
-    console.log('✅ InactivityHandler constructor completed');
+    this.context.logger.info('INACTIVITY: InactivityHandler initialized');
   }
 
   setupInactivityDetection(params: {

@@ -39,7 +39,6 @@ export class GoogleMeetBot extends MeetBotBase {
     this._correlationId = correlationId;
 
     // Test logger
-    console.log('🏗️ GoogleMeetBot constructor called', { correlationId, slightlySecretId: this.slightlySecretId });
     this._logger.info('GoogleMeetBot constructor called', { correlationId, slightlySecretId: this.slightlySecretId });
 
     // Initialize context for handlers
@@ -132,18 +131,7 @@ export class GoogleMeetBot extends MeetBotBase {
       hasWebhookUrl: !!webhookUrl
     });
 
-    // Debug log to verify logger is working
-    console.log('🔥 GOOGLE MEET BOT JOIN STARTED', {
-      url: url?.substring(0, 50) + '...',
-      userId,
-      teamId,
-      botId,
-      eventId,
-      hasUploader: !!uploader,
-      hasWebhookUrl: !!webhookUrl
-    });
-
-    this._logger.info('=== GOOGLE MEET BOT JOIN STARTED ===', {
+    this._logger.info('GOOGLE MEET BOT JOIN STARTED', {
       url: url?.substring(0, 50) + '...',
       userId,
       teamId,

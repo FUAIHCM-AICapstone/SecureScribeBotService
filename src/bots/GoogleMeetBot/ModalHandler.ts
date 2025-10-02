@@ -8,10 +8,9 @@ export class GoogleMeetModalHandler implements IGoogleMeetModalHandler {
   private logger: Logger;
 
   constructor(context: any, logger: Logger) {
-    console.log('🎯 ModalHandler constructor called');
+    this.logger.info('MODAL: ModalHandler initialized');
     this.context = context;
     this.logger = logger;
-    console.log('✅ ModalHandler constructor completed');
   }
 
   async dismissDeviceCheck(): Promise<void> {
@@ -35,7 +34,6 @@ export class GoogleMeetModalHandler implements IGoogleMeetModalHandler {
       await this.context.page.waitForSelector('button:has-text("Got it")', { timeout: 15000 });
 
 
-      let gotItButtonsClicked = 0;
       let previousButtonCount = -1;
       let consecutiveNoChangeCount = 0;
       const maxConsecutiveNoChange = 2; // Stop if button count doesn't change for 2 consecutive iterations
@@ -67,8 +65,6 @@ export class GoogleMeetModalHandler implements IGoogleMeetModalHandler {
         for (const btn of visibleButtons) {
           try {
             await btn.click({ timeout: 5000 });
-            gotItButtonsClicked++;
-
             await this.context.page.waitForTimeout(2000);
           } catch (err) {
             this.logger.warn('Click failed, possibly already dismissed', { error: err });

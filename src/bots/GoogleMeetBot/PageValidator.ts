@@ -7,15 +7,14 @@ export class GoogleMeetPageValidator implements IGoogleMeetPageValidator {
   private logger: Logger;
 
   constructor(context: any, logger: Logger) {
-    console.log('🔍 PageValidator constructor called');
+    this.logger.info('PAGE_VALIDATOR: PageValidator initialized');
     this.context = context;
     this.logger = logger;
-    console.log('✅ PageValidator constructor completed');
   }
 
   async verifyGoogleMeetPage(): Promise<'SIGN_IN_PAGE' | 'GOOGLE_MEET_PAGE' | 'UNSUPPORTED_PAGE' | null> {
     try {
-      this.logger.info('🔍 PageValidator.verifyGoogleMeetPage STARTED', { userId: this.context.userId, teamId: this.context.teamId });
+      this.logger.info('PAGE_VALIDATOR: Verifying Google Meet page', { userId: this.context.userId, teamId: this.context.teamId });
 
       const detectSignInPage = async () => {
         let result = false;
