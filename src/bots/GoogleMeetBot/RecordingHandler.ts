@@ -20,11 +20,11 @@ export class GoogleMeetRecordingHandler implements IGoogleMeetRecordingHandler {
     chatHandler: IGoogleMeetChatHandler,
     inactivityHandler: IGoogleMeetInactivityHandler
   ) {
-    this.logger.info('RECORDING: RecordingHandler initialized');
     this.context = context;
     this.logger = logger;
     this.chatHandler = chatHandler;
     this.inactivityHandler = inactivityHandler;
+    this.logger.info('RECORDING: RecordingHandler initialized');
   }
 
   async recordMeetingPage({
