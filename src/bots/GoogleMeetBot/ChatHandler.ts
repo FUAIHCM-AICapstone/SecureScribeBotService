@@ -10,10 +10,10 @@ export class GoogleMeetChatHandler implements IGoogleMeetChatHandler {
   private botId?: string;
 
   constructor(context: any, logger: Logger) {
-    this.logger.info('CHAT: ChatHandler initialized');
     this.context = context;
     this.logger = logger;
     this.botId = context.botId;
+    this.logger.info('CHAT: ChatHandler initialized');
   }
 
   async sendChatMessage(): Promise<void> {

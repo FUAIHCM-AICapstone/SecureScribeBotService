@@ -7,9 +7,9 @@ export class GoogleMeetPageValidator implements IGoogleMeetPageValidator {
   private logger: Logger;
 
   constructor(context: any, logger: Logger) {
-    this.logger.info('PAGE_VALIDATOR: PageValidator initialized');
     this.context = context;
     this.logger = logger;
+    this.logger.info('PAGE_VALIDATOR: PageValidator initialized');
   }
 
   async verifyGoogleMeetPage(): Promise<'SIGN_IN_PAGE' | 'GOOGLE_MEET_PAGE' | 'UNSUPPORTED_PAGE' | null> {

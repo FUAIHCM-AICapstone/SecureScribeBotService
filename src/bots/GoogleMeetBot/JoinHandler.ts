@@ -22,12 +22,12 @@ export class GoogleMeetJoinHandler implements IGoogleMeetJoinHandler {
     lobbyHandler: IGoogleMeetLobbyHandler,
     modalHandler: IGoogleMeetModalHandler
   ) {
-    this.logger.info('JOIN: JoinHandler initialized');
     this.context = context;
     this.logger = logger;
     this.pageValidator = pageValidator;
     this.lobbyHandler = lobbyHandler;
     this.modalHandler = modalHandler;
+    this.logger.info('JOIN: JoinHandler initialized');
   }
 
   async joinMeeting({ url, name, teamId, userId, botId, pushState }: JoinParams & { pushState(state: BotStatus): void }): Promise<void> {

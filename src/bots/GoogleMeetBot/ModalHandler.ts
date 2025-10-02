@@ -8,9 +8,9 @@ export class GoogleMeetModalHandler implements IGoogleMeetModalHandler {
   private logger: Logger;
 
   constructor(context: any, logger: Logger) {
-    this.logger.info('MODAL: ModalHandler initialized');
     this.context = context;
     this.logger = logger;
+    this.logger.info('MODAL: ModalHandler initialized');
   }
 
   async dismissDeviceCheck(): Promise<void> {
