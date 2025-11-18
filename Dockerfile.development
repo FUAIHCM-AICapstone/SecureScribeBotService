@@ -51,8 +51,10 @@ COPY auto_launch_protocols.json /etc/opt/chrome/policies/managed/auto_launch_pro
 # Install global tools
 RUN npm install -g nodemon
 
-# Install dependencies
+# Copy package files
 COPY package*.json ./
+
+# Install dependencies
 RUN npm install
 
 # Install Playwright and its dependencies
@@ -69,4 +71,4 @@ RUN chmod +x /usr/src/app/start.sh
 
 EXPOSE 3000
 
-CMD ["node", "dist/index.js"]
+CMD ["/bin/bash", "./start.sh"]

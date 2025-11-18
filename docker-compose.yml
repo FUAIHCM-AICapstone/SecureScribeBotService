@@ -7,11 +7,6 @@ services:
       - NODE_ENV=development
     ports:
       - '3000:3000'
-    volumes:
-      - .:/usr/src/app
-      - ./assets/screenshots:/usr/src/app/assets/screenshots
-      - /usr/src/app/node_modules
-    command: ['/bin/bash', './start.sh']
 
   minio:
     image: minio/minio:latest

@@ -25,12 +25,6 @@ FROM ${RUNTIME_IMAGE}
 
 WORKDIR /usr/src/app
 
-# Copy package files from builder
-COPY --from=builder /usr/src/app/package*.json ./
-
-# Install production dependencies only
-RUN npm ci --only=production && npm cache clean --force
-
 # Copy built app and wrapper from builder
 COPY --from=builder /usr/src/app/dist ./dist
 COPY --from=builder /usr/src/app/xvfb-run-wrapper ./
@@ -38,11 +32,10 @@ COPY --from=builder /usr/src/app/xvfb-run-wrapper ./
 # Copy Chrome policy
 COPY --chown=nodejs:nodejs auto_launch_protocols.json /etc/opt/chrome/policies/managed/auto_launch_protocols.json
 
-# Create temp video directory with proper permissions
-RUN mkdir -p /usr/src/app/dist/_tempvideo && chmod -R 777 /usr/src/app/dist/_tempvideo
-
-# Process script
+# Process script (run as root before switching to nodejs user)
+USER root
 RUN dos2unix /usr/src/app/xvfb-run-wrapper && chmod +x /usr/src/app/xvfb-run-wrapper
+USER nodejs
 
 # Start app (xvfb-run optional, doesn't fail container if xvfb errors)
 CMD bash -c "xvfb-run -a node dist/index.js || node dist/index.js"

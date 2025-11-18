@@ -47,12 +47,18 @@ RUN apt-get update && \
 # Chrome policy
 RUN mkdir -p /etc/opt/chrome/policies/managed
 
+# Create temp video directory
+RUN mkdir -p /usr/src/app/dist/_tempvideo && chmod -R 777 /usr/src/app/dist/_tempvideo
+
+# Copy package files and install dependencies
+COPY package*.json ./
+RUN npm ci --only=production && npm cache clean --force
+
 # Environment
 ENV NODE_ENV=production
 ENV DISPLAY=:99
 
 EXPOSE 3000
-
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD node -e "require('http').get('http://localhost:3000/health', (res) => { process.exit(res.statusCode === 200 ? 0 : 1) })" || exit 1
