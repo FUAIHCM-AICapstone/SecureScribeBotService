@@ -1,0 +1,62 @@
+# Base runtime image with all system dependencies and Node.js
+FROM node:18-slim
+
+WORKDIR /usr/src/app
+
+# Install system dependencies and Google Chrome in single layer (alphabetically sorted)
+RUN apt-get update && \
+  apt-get install -y \
+  dos2unix \
+  ffmpeg \
+  gnupg \
+  libasound2 \
+  libatk-bridge2.0-0 \
+  libatk1.0-0 \
+  libcups2 \
+  libgbm-dev \
+  libgl1-mesa-dri \
+  libgl1-mesa-glx \
+  libnss3 \
+  libx11-dev \
+  libxext-dev \
+  libxkbcommon-x11-0 \
+  libxss1 \
+  mesa-utils \
+  wget \
+  xorg \
+  xserver-xorg \
+  xvfb \
+  $(if [ "$(dpkg --print-architecture)" = "arm64" ]; then echo "libegl1 libgles2 libwayland-egl1"; fi) && \
+  wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /usr/share/keyrings/google-linux-signing-key.gpg && \
+  ARCH=$(dpkg --print-architecture) && \
+  if [ "$ARCH" = "amd64" ]; then \
+    echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-linux-signing-key.gpg] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list; \
+  elif [ "$ARCH" = "arm64" ]; then \
+    echo "deb [arch=arm64 signed-by=/usr/share/keyrings/google-linux-signing-key.gpg] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list; \
+  else \
+    echo "deb [signed-by=/usr/share/keyrings/google-linux-signing-key.gpg] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list; \
+  fi && \
+  apt-get update && apt-get install -y google-chrome-stable || apt-get install -y chromium && \
+  if [ "$(dpkg --print-architecture)" = "arm64" ]; then ln -sf /usr/bin/chromium /usr/bin/google-chrome; fi && \
+  groupadd -g 1001 nodejs && \
+  useradd -m -d /home/nodejs -r -u 1001 -g nodejs nodejs && \
+  mkdir -p /tmp/.X11-unix && chmod 1777 /tmp/.X11-unix && \
+  usermod -a -G video nodejs && \
+  rm -rf /var/lib/apt/lists/*
+
+# Chrome policy
+RUN mkdir -p /etc/opt/chrome/policies/managed
+
+# Environment
+ENV NODE_ENV=production
+ENV DISPLAY=:99
+
+# Expose port
+EXPOSE 3000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD node -e "require('http').get('http://localhost:3000/health', (res) => { process.exit(res.statusCode === 200 ? 0 : 1) })" || exit 1
+
+# Switch user
+USER nodejs
