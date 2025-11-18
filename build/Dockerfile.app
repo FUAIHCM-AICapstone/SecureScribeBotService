@@ -1,3 +1,6 @@
+# Declare build argument at the top level
+ARG RUNTIME_IMAGE=runtime:latest
+
 # Build stage
 FROM node:18 AS builder
 
@@ -18,7 +21,6 @@ COPY . .
 RUN npm run build
 
 # Application stage - uses runtime base image
-ARG RUNTIME_IMAGE=runtime:latest
 FROM ${RUNTIME_IMAGE}
 
 WORKDIR /usr/src/app
