@@ -21,6 +21,10 @@ services:
       - minio-data:/data
     command: server /data --console-address ":9001"
 
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+
 volumes:
   cache:
   minio-data:
