@@ -52,7 +52,8 @@ RUN mkdir -p /usr/src/app/dist/_tempvideo && chmod -R 777 /usr/src/app/dist/_tem
 
 # Copy package files and install dependencies
 COPY package*.json ./
-RUN npm ci --only=production && npm cache clean --force
+RUN npm ci && npm cache clean --force && \
+  npx playwright install --with-deps
 
 # Environment
 ENV NODE_ENV=production

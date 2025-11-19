@@ -10,15 +10,11 @@ WORKDIR /usr/src/app
 COPY package*.json ./
 ENV NODE_OPTIONS=--dns-result-order=ipv4first
 
-# Install dependencies and Playwright
-RUN npm ci && npm cache clean --force && \
-  npx playwright install --with-deps
-
 # Copy source code
 COPY . .
 
 # Build app
-RUN npm run build
+RUN npm ci && npm cache clean --force && npm run build
 
 # Application stage - uses runtime base image
 FROM ${RUNTIME_IMAGE}
