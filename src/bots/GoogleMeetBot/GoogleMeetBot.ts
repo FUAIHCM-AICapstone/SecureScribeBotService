@@ -141,13 +141,34 @@ export class GoogleMeetBot extends MeetBotBase {
       hasWebhookUrl: !!webhookUrl
     });
 
-    const _state: BotStatus[] = ['processing'];
+    const _state: BotStatus[] = ['pending'];
 
     const handleUpload = async () => {
       this._logger.info('UPLOAD: Starting recording upload to server', { userId, teamId, botId, eventId });
       const uploadResult = await uploader.uploadRecordingToRemoteStorage();
       this._logger.info('UPLOAD: Recording upload result', { uploadResult, userId, teamId, botId, eventId });
       return uploadResult;
+    };
+
+    const sendStatusUpdate = async (status: BotStatus) => {
+      if (!webhookUrl || !botId) return;
+      const { callStatusWebhook } = await import('../../services/webhookService');
+      try {
+        await callStatusWebhook(
+          webhookUrl.replace('/recording', '/status'),
+          bearerToken,
+          {
+            botId,
+            status,
+            meetingUrl: url,
+            timestamp: new Date().toISOString(),
+            actual_start_time: status === 'joined' || status === 'recording' ? new Date().toISOString() : undefined,
+          },
+          this._logger
+        );
+      } catch (err) {
+        this._logger.warn('STATUS_UPDATE: Failed to send status webhook', { status, error: err.message });
+      }
     };
 
     try {
@@ -182,7 +203,10 @@ export class GoogleMeetBot extends MeetBotBase {
           eventId,
           botId,
           uploader,
-          pushState
+          pushState: (st: BotStatus) => {
+            pushState(st);
+            void sendStatusUpdate(st); // Send webhook update for state change
+          }
         });
         this._logger.info('✅ JoinHandler.joinMeeting() completed successfully');
       } catch (error) {
@@ -210,16 +234,17 @@ export class GoogleMeetBot extends MeetBotBase {
       });
       this._logger.info('Recording process completed');
 
-      // Update state to finished before upload
-      pushState('finished');
+      // Update state to complete before upload
+      pushState('complete');
+      await sendStatusUpdate('recording');
 
       this._logger.info('Starting upload process...');
       const uploadResult = await handleUpload();
       this._logger.info('Upload process completed', { uploadSuccess: uploadResult.success });
       const uploadSuccess = uploadResult.success;
 
-      if (_state.includes('finished') && !uploadSuccess) {
-        _state.splice(_state.indexOf('finished'), 1, 'failed');
+      if (_state.includes('complete') && !uploadSuccess) {
+        _state.splice(_state.indexOf('complete'), 1, 'error');
         this._logger.warn('UPLOAD: Upload failed after meeting finished', {
           userId,
           botId,
@@ -321,14 +346,21 @@ export class GoogleMeetBot extends MeetBotBase {
       }
     }
 
+    // Map bot states to backend status values
+    const mapStatusToBackendStatus = (botStates: BotStatus[]): 'complete' | 'error' => {
+      return botStates.includes('error') ? 'error' : 'complete';
+    };
+
     const webhookPayload: WebhookPayload = {
-      status: _state.includes('failed') ? 'failed' : 'completed',
+      status: mapStatusToBackendStatus(_state),
       userId,
       teamId,
       botId,
       eventId,
       meetingUrl: url,
       timestamp: new Date().toISOString(),
+      actual_start_time: new Date().toISOString(),
+      actual_end_time: new Date().toISOString(),
       fileData,
       fileName,
       error: !uploadSuccess ? 'Upload failed or file missing' : undefined
@@ -416,7 +448,7 @@ export class GoogleMeetBot extends MeetBotBase {
       eventId?: string;
     }
   ): Promise<void> {
-    if (!_state.includes('finished')) _state.push('failed');
+    if (!_state.includes('complete')) _state.push('error');
 
     this._logger.error('JOIN: Error during join process', {
       error: error.message,
@@ -435,13 +467,14 @@ export class GoogleMeetBot extends MeetBotBase {
 
     if (webhookUrl) {
       const webhookPayload: WebhookPayload = {
-        status: 'failed',
+        status: 'error',
         userId,
         teamId,
         botId,
         eventId,
         meetingUrl: url,
         timestamp: new Date().toISOString(),
+        actual_end_time: new Date().toISOString(),
         error: error.message
       };
 

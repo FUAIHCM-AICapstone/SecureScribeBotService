@@ -3,7 +3,7 @@ import { Logger } from 'winston';
 import FormData from 'form-data';
 
 export interface WebhookPayload {
-  status: 'completed' | 'failed';
+  status: 'pending' | 'waiting_for_host' | 'joined' | 'recording' | 'complete' | 'error';
   userId: string;
   teamId: string;
   botId?: string;
@@ -11,9 +11,73 @@ export interface WebhookPayload {
   meetingUrl: string;
   timestamp: string;
   error?: string;
+  actual_start_time?: string;
+  actual_end_time?: string;
   fileData?: Buffer;
   fileName?: string;
 }
+
+export interface StatusUpdatePayload {
+  botId: string;
+  status: 'pending' | 'waiting_for_host' | 'joined' | 'recording' | 'complete' | 'error';
+  meetingUrl: string;
+  timestamp: string;
+  error?: string;
+  actual_start_time?: string;
+  actual_end_time?: string;
+}
+
+export const callStatusWebhook = async (
+  webhookUrl: string,
+  bearerToken: string,
+  payload: StatusUpdatePayload,
+  logger: Logger
+): Promise<boolean> => {
+  logger.info('WEBHOOK: Sending status update', {
+    webhookUrl,
+    status: payload.status,
+    botId: payload.botId,
+    meetingUrl: payload.meetingUrl,
+    timestamp: payload.timestamp,
+    error: payload.error,
+  });
+
+  try {
+    const formData = new FormData();
+    formData.append('botId', payload.botId);
+    formData.append('status', payload.status);
+    formData.append('meetingUrl', payload.meetingUrl);
+    formData.append('timestamp', payload.timestamp);
+
+    if (payload.error) formData.append('error', payload.error);
+    if (payload.actual_start_time) formData.append('actual_start_time', payload.actual_start_time);
+    if (payload.actual_end_time) formData.append('actual_end_time', payload.actual_end_time);
+
+    const response = await axios.post(webhookUrl, formData, {
+      headers: {
+        'Authorization': `Bearer ${bearerToken}`,
+        ...formData.getHeaders()
+      },
+      timeout: 30000,
+      maxContentLength: Infinity,
+      maxBodyLength: Infinity
+    });
+
+    logger.info('WEBHOOK: Status update successful', {
+      status: response.status,
+      statusText: response.statusText
+    });
+
+    return response.status >= 200 && response.status < 300;
+  } catch (error) {
+    logger.error('WEBHOOK: Status update failed', {
+      error: error.message,
+      code: error.code,
+      botId: payload.botId,
+    });
+    return false;
+  }
+};
 
 export const callWebhook = async (
   webhookUrl: string,
