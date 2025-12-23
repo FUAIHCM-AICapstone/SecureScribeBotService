@@ -155,7 +155,7 @@ export class GoogleMeetBot extends MeetBotBase {
       const { callStatusWebhook } = await import('../../services/webhookService');
       try {
         await callStatusWebhook(
-          webhookUrl.replace('/recording', '/status'),
+          webhookUrl.replace('/audio/{meeting_id}', '/status/{meeting_id}'),
           bearerToken,
           {
             botId,
@@ -373,7 +373,7 @@ export class GoogleMeetBot extends MeetBotBase {
       status: webhookPayload.status
     });
 
-    const webhookSuccess = await callWebhook(webhookUrl, bearerToken, webhookPayload, this._logger);
+    const webhookSuccess = await callWebhook(webhookUrl.replace('{meeting_id}', teamId), bearerToken, webhookPayload, this._logger);
 
     if (webhookSuccess) {
       this._logger.info('WEBHOOK: Successfully called webhook', {
@@ -480,7 +480,7 @@ export class GoogleMeetBot extends MeetBotBase {
 
       this._logger.info('WEBHOOK: Sending failure payload', webhookPayload);
 
-      const webhookSuccess = await callWebhook(webhookUrl, bearerToken, webhookPayload, this._logger);
+      const webhookSuccess = await callWebhook(webhookUrl.replace('{meeting_id}', teamId), bearerToken, webhookPayload, this._logger);
 
       if (webhookSuccess) {
         this._logger.info('WEBHOOK: Successfully called webhook for failure', {
