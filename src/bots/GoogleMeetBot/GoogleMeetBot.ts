@@ -243,7 +243,7 @@ export class GoogleMeetBot extends MeetBotBase {
       this._logger.info('Recording process completed');
 
       // Update state to complete before upload
-      pushState('complete');
+      pushState('completed');
       await sendStatusUpdate('recording');
 
       this._logger.info('Starting upload process...');
@@ -251,8 +251,8 @@ export class GoogleMeetBot extends MeetBotBase {
       this._logger.info('Upload process completed', { uploadSuccess: uploadResult.success });
       const uploadSuccess = uploadResult.success;
 
-      if (_state.includes('complete') && !uploadSuccess) {
-        _state.splice(_state.indexOf('complete'), 1, 'error');
+      if (_state.includes('completed') && !uploadSuccess) {
+        _state.splice(_state.indexOf('completed'), 1, 'error');
         this._logger.warn('UPLOAD: Upload failed after meeting finished', {
           userId,
           botId,

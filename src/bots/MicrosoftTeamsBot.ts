@@ -41,7 +41,7 @@ export class MicrosoftTeamsBot extends MeetBotBase {
       // Finish the upload from the temp video
       await handleUpload();
     } catch (error) {
-      if (!_state.includes('complete'))
+      if (!_state.includes('completed'))
         _state.push('error');
 
       await patchBotStatus({ botId, eventId, provider: 'microsoft', status: _state, token: bearerToken }, this._logger);
@@ -248,7 +248,7 @@ export class MicrosoftTeamsBot extends MeetBotBase {
     this._logger.info('Begin recording...');
     await this.recordMeetingPage({ teamId, userId, eventId, botId, uploader });
 
-    pushState('complete');
+    pushState('completed');
   }
 
   private async recordMeetingPage(

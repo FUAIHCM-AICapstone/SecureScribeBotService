@@ -54,7 +54,7 @@ export class ZoomBot extends BotBase {
       // Finish the upload from the temp video
       await handleUpload();
     } catch (error) {
-      if (!_state.includes('complete'))
+      if (!_state.includes('completed'))
         _state.push('error');
 
       await patchBotStatus({ botId, eventId, provider: 'zoom', status: _state, token: bearerToken }, this._logger);
@@ -459,7 +459,7 @@ export class ZoomBot extends BotBase {
     this._logger.info('Begin recording...');
     await this.recordMeetingPage({ ...params });
 
-    pushState('complete');
+    pushState('completed');
   }
 
   private async recordMeetingPage(params: JoinParams): Promise<void> {
