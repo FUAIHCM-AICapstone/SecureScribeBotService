@@ -150,10 +150,11 @@ export class GoogleMeetBot extends MeetBotBase {
       return uploadResult;
     };
 
-    const mapBotStatusToWebhookStatus = (botStatus: BotStatus): 'pending' | 'waiting_for_host' | 'joined' | 'recording' | 'complete' | 'failed' => {
+    const mapBotStatusToWebhookStatus = (botStatus: BotStatus): 'pending' | 'waiting_for_host' | 'joined' | 'recording' | 'completed' | 'failed' => {
       switch (botStatus) {
         case 'error': return 'failed';
-        default: return botStatus;
+        case 'completed': return 'completed';
+        default: return botStatus as any;
       }
     };
 
@@ -354,8 +355,8 @@ export class GoogleMeetBot extends MeetBotBase {
     }
 
     // Map bot states to backend status values
-    const mapStatusToBackendStatus = (botStates: BotStatus[]): 'complete' | 'failed' => {
-      return botStates.includes('error') ? 'failed' : 'complete';
+    const mapStatusToBackendStatus = (botStates: BotStatus[]): 'completed' | 'failed' => {
+      return botStates.includes('error') ? 'failed' : 'completed';
     };
 
     const webhookPayload: WebhookPayload = {
@@ -455,7 +456,7 @@ export class GoogleMeetBot extends MeetBotBase {
       eventId?: string;
     }
   ): Promise<void> {
-    if (!_state.includes('complete')) _state.push('error');
+    if (!_state.includes('completed')) _state.push('error');
 
     this._logger.error('JOIN: Error during join process', {
       error: error.message,
