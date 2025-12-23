@@ -150,6 +150,13 @@ export class GoogleMeetBot extends MeetBotBase {
       return uploadResult;
     };
 
+    const mapBotStatusToWebhookStatus = (botStatus: BotStatus): 'pending' | 'waiting_for_host' | 'joined' | 'recording' | 'complete' | 'failed' => {
+      switch (botStatus) {
+        case 'error': return 'failed';
+        default: return botStatus;
+      }
+    };
+
     const sendStatusUpdate = async (status: BotStatus) => {
       if (!webhookUrl || !botId) return;
       const { callStatusWebhook } = await import('../../services/webhookService');
@@ -159,7 +166,7 @@ export class GoogleMeetBot extends MeetBotBase {
           bearerToken,
           {
             botId,
-            status,
+            status: mapBotStatusToWebhookStatus(status),
             meetingUrl: url,
             timestamp: new Date().toISOString(),
             actual_start_time: status === 'joined' || status === 'recording' ? new Date().toISOString() : undefined,
@@ -347,8 +354,8 @@ export class GoogleMeetBot extends MeetBotBase {
     }
 
     // Map bot states to backend status values
-    const mapStatusToBackendStatus = (botStates: BotStatus[]): 'complete' | 'error' => {
-      return botStates.includes('error') ? 'error' : 'complete';
+    const mapStatusToBackendStatus = (botStates: BotStatus[]): 'complete' | 'failed' => {
+      return botStates.includes('error') ? 'failed' : 'complete';
     };
 
     const webhookPayload: WebhookPayload = {
@@ -467,7 +474,7 @@ export class GoogleMeetBot extends MeetBotBase {
 
     if (webhookUrl) {
       const webhookPayload: WebhookPayload = {
-        status: 'error',
+        status: 'failed',
         userId,
         teamId,
         botId,

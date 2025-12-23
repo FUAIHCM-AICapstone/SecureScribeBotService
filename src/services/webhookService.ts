@@ -3,7 +3,7 @@ import { Logger } from 'winston';
 import FormData from 'form-data';
 
 export interface WebhookPayload {
-  status: 'pending' | 'waiting_for_host' | 'joined' | 'recording' | 'complete' | 'error';
+  status: 'pending' | 'waiting_for_host' | 'joined' | 'recording' | 'complete' | 'failed';
   userId: string;
   teamId: string;
   botId?: string;
@@ -19,7 +19,7 @@ export interface WebhookPayload {
 
 export interface StatusUpdatePayload {
   botId: string;
-  status: 'pending' | 'waiting_for_host' | 'joined' | 'recording' | 'complete' | 'error';
+  status: 'pending' | 'waiting_for_host' | 'joined' | 'recording' | 'complete' | 'failed';
   meetingUrl: string;
   timestamp: string;
   error?: string;
